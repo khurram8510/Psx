@@ -1,0 +1,53 @@
+# KMI-30 agent configuration. Secrets go in .env, not here.
+# Every value shown is the built-in default; delete a line to keep the default.
+
+source:
+  mode: live                    # live | simulated
+  base_url: https://dps.psx.com.pk
+  symbol: KMI30
+  poll_interval_s: 10           # keep >= 10s; the portal stalls connections on request bursts
+  request_timeout_s: 15
+  max_backoff_s: 120
+  timestamp_mode: auto          # auto | pkt_wallclock | utc
+
+market:
+  timezone: Asia/Karachi
+  # Regular sessions in PKT. Update on PSX notices (Ramadan timings, etc.).
+  sessions:
+    mon: [["09:30", "15:30"]]
+    tue: [["09:30", "15:30"]]
+    wed: [["09:30", "15:30"]]
+    thu: [["09:30", "15:30"]]
+    fri: [["09:15", "12:00"], ["14:30", "16:30"]]
+  # PSX-announced closures, YYYY-MM-DD. Without these you get one info alert on a holiday.
+  holidays: []
+  close_grace_min: 5
+
+detection:
+  warmup_min: 15                # bar detectors silent after each session open
+  cooldown_min: 15              # per alert key; a higher severity bypasses it
+  ewma_lambda: 0.94
+  eod_vol_lookback: 20
+  level:      {enabled: true, warning_pct: 1.0, critical_pct: 2.0, hysteresis_pct: 0.25}
+  velocity:   {enabled: true, window_min: 5, warning_z: 3.0, critical_z: 4.5, rearm_z: 1.5}
+  trend:      {enabled: true, fast: 5, slow: 20, confirm_bars: 2, slope_window: 10,
+               min_separation_pct: 0.02, min_separation_sigma: 3.0}
+  cusum:      {enabled: true, k: 0.5, h: 5.0}
+  vol_regime: {enabled: true, window_min: 15, lookback_days: 20, min_history_days: 5,
+               warning_ratio: 2.0, critical_ratio: 3.0, rearm_ratio: 1.5, baseline_lambda: 0.985}
+  feed:       {enabled: true, stale_min: 3, no_data_after_open_min: 30, failure_streak: 5}
+
+slack:
+  channel_label: KMI-30 Monitor
+  min_severity: info            # info | warning | critical
+  max_retries: 4
+
+web:
+  host: 0.0.0.0
+  port: 8080
+
+storage:
+  path: data/kmi30.db           # overridden to /data/kmi30.db in the container
+  retention_days: 120
+
+log_level: INFO

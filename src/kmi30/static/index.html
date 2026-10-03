@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>KMI-30 Live</title>
+<style>
+:root{
+  --bg:#f6f7f9;--panel:#ffffff;--ink:#14171c;--muted:#5d6673;--line:#e3e6ea;
+  --up:#0f8a5f;--down:#cf3b3b;--accent:#2f6fdb;--warn:#b7791f;--crit:#cf3b3b;--info:#2f6fdb;
+  --ema-fast:#e08a00;--ema-slow:#7b5cd6;--chip:#eef1f5;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#0f1216;--panel:#171b21;--ink:#e7eaee;--muted:#98a2b0;--line:#272d36;
+  --up:#33c48d;--down:#ff6b6b;--accent:#6aa0ff;--warn:#f0b445;--crit:#ff6b6b;--info:#6aa0ff;
+  --ema-fast:#f0a63a;--ema-slow:#a58cff;--chip:#222831;
+}}
+:root[data-theme="dark"]{
+  --bg:#0f1216;--panel:#171b21;--ink:#e7eaee;--muted:#98a2b0;--line:#272d36;
+  --up:#33c48d;--down:#ff6b6b;--accent:#6aa0ff;--warn:#f0b445;--crit:#ff6b6b;--info:#6aa0ff;
+  --ema-fast:#f0a63a;--ema-slow:#a58cff;--chip:#222831;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1280px;margin:0 auto;padding:16px}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-bottom:14px}
+h1{font-size:20px;margin:0;font-weight:650;letter-spacing:-.01em}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;background:var(--chip);color:var(--muted);font-size:12px;font-weight:600}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.pill.open .dot{background:var(--up)} .pill.closed .dot{background:var(--muted)}
+.pill.live .dot{background:var(--up)} .pill.down .dot{background:var(--down)}
+.sim{background:var(--warn);color:#1b1300}
+.spacer{flex:1}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
+.kpi .l{color:var(--muted);font-size:12px}
+.kpi .v{font-size:19px;font-weight:650;font-variant-numeric:tabular-nums;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kpi.big .v{font-size:clamp(20px,2.2vw,24px)}
+@media (min-width:1100px){.kpis{grid-template-columns:1.35fr 1.1fr repeat(5,1fr)}}
+.kpi .s{font-size:12.5px;font-variant-numeric:tabular-nums;margin-top:1px}
+.up{color:var(--up)} .down{color:var(--down)}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:14px}
+@media (max-width:960px){.grid{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;min-width:0}
+.panel h2{font-size:13px;margin:0 0 8px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+#chart{height:440px;width:100%}
+@media (max-width:600px){#chart{height:320px}}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--muted);margin-top:8px}
+.sw{display:inline-block;width:14px;height:3px;border-radius:2px;margin-right:6px;vertical-align:middle}
+#alerts{list-style:none;margin:0;padding:0;max-height:520px;overflow:auto}
+#alerts li{border-top:1px solid var(--line);padding:9px 2px}
+#alerts li:first-child{border-top:0}
+.sev{font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;margin-right:6px;text-transform:uppercase}
+.sev.critical{background:var(--crit);color:#fff} .sev.warning{background:var(--warn);color:#1b1300} .sev.info{background:var(--info);color:#fff}
+.at{color:var(--muted);font-size:12px;font-variant-numeric:tabular-nums}
+.title{font-weight:600;margin-top:3px}
+.detail{color:var(--muted);font-size:12.5px;margin-top:2px}
+.empty{color:var(--muted);padding:8px 2px}
+footer{color:var(--muted);font-size:12px;margin-top:12px}
+button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:4px 10px;cursor:pointer;font:inherit;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>KMI-30 Live</h1>
+    <span id="market" class="pill closed"><span class="dot"></span><span>Market</span></span>
+    <span id="conn" class="pill down"><span class="dot"></span><span>Connecting</span></span>
+    <span id="sim" class="pill sim" hidden>Simulated data</span>
+    <span class="spacer"></span>
+    <button class="theme" id="theme" type="button">Theme</button>
+  </header>
+
+  <section class="kpis">
+    <div class="kpi big"><div class="l">KMI-30</div><div class="v" id="k-last">-</div></div>
+    <div class="kpi big"><div class="l">Change vs prev close</div><div class="v" id="k-chg">-</div><div class="s" id="k-chg-abs"></div></div>
+    <div class="kpi"><div class="l">Day high</div><div class="v" id="k-high">-</div></div>
+    <div class="kpi"><div class="l">Day low</div><div class="v" id="k-low">-</div></div>
+    <div class="kpi"><div class="l">Previous close</div><div class="v" id="k-prev">-</div></div>
+    <div class="kpi"><div class="l">1-min volatility</div><div class="v" id="k-sigma">-</div></div>
+    <div class="kpi"><div class="l">Last update</div><div class="v" id="k-age">-</div></div>
+  </section>
+
+  <section class="grid">
+    <div class="panel">
+      <h2>Intraday, 1-minute closes</h2>
+      <div id="chart"></div>
+      <div class="legend">
+        <span><span class="sw" style="background:var(--accent)"></span>KMI-30</span>
+        <span><span class="sw" style="background:var(--ema-fast)"></span>EMA 5</span>
+        <span><span class="sw" style="background:var(--ema-slow)"></span>EMA 20</span>
+        <span><span class="sw" style="background:var(--muted)"></span>Previous close</span>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Alerts today</h2>
+      <ul id="alerts"><li class="empty">No alerts yet.</li></ul>
+    </div>
+  </section>
+  <footer id="foot">Source: PSX Data Portal. Times in Pakistan Standard Time. Statistical signals, not investment advice.</footer>
+</div>
+
+<script src="/static/vendor/lightweight-charts.standalone.production.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const css = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const fmt = (v, d = 2) => v == null ? "-" : Number(v).toLocaleString("en-US", {minimumFractionDigits: d, maximumFractionDigits: d});
+  const pkt = new Intl.DateTimeFormat("en-GB", {timeZone: "Asia/Karachi", hour: "2-digit", minute: "2-digit", second: "2-digit"});
+  const EMA_FAST = 5, EMA_SLOW = 20;
+  // Chart times are already shifted to PKT wall-clock, so format them as UTC.
+  const hhmm = (t) => { const d = new Date(t * 1000); return String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0"); };
+
+  const S = {offset: 18000, bars: [], current: null, prev: null, alerts: [], status: {}, last: null, high: null, low: null};
+
+  try { const t = localStorage.getItem("kmi30-theme"); if (t) document.documentElement.dataset.theme = t; } catch (_) {}
+  $("theme").onclick = () => {
+    const cur = document.documentElement.dataset.theme
+      || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+    const next = cur === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("kmi30-theme", next); } catch (_) {}
+    applyTheme();
+  };
+
+  const chart = LightweightCharts.createChart($("chart"), {
+    autoSize: true,
+    layout: {background: {type: "solid", color: "transparent"}, textColor: css("--muted"), fontSize: 12},
+    grid: {vertLines: {color: css("--line")}, horzLines: {color: css("--line")}},
+    rightPriceScale: {borderColor: css("--line")},
+    timeScale: {borderColor: css("--line"), timeVisible: true, secondsVisible: false,
+                tickMarkFormatter: (t) => hhmm(t)},
+    crosshair: {mode: 0},
+    localization: {locale: "en-US", priceFormatter: (p) => fmt(p), timeFormatter: (t) => hhmm(t)},
+  });
+  const price = chart.addLineSeries({color: css("--accent"), lineWidth: 2, priceLineVisible: true});
+  const emaF = chart.addLineSeries({color: css("--ema-fast"), lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false});
+  const emaS = chart.addLineSeries({color: css("--ema-slow"), lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false});
+  let prevLine = null;
+
+  function applyTheme() {
+    chart.applyOptions({
+      layout: {textColor: css("--muted")},
+      grid: {vertLines: {color: css("--line")}, horzLines: {color: css("--line")}},
+      rightPriceScale: {borderColor: css("--line")}, timeScale: {borderColor: css("--line")},
+    });
+    price.applyOptions({color: css("--accent")});
+    emaF.applyOptions({color: css("--ema-fast")});
+    emaS.applyOptions({color: css("--ema-slow")});
+    drawPrevLine(); drawMarkers();
+  }
+
+  function series() {
+    const all = S.bars.slice();
+    if (S.current && (!all.length || S.current.ts > all[all.length - 1].ts)) all.push(S.current);
+    return all;
+  }
+
+  function ema(points, n) {
+    const a = 2 / (n + 1); let e = null;
+    return points.map((p) => { e = e == null ? p.value : e + a * (p.value - e); return {time: p.time, value: e}; });
+  }
+
+  function drawChart() {
+    const pts = series().map((b) => ({time: b.ts + S.offset, value: b.c}));
+    price.setData(pts);
+    emaF.setData(pts.length >= EMA_FAST ? ema(pts, EMA_FAST) : []);
+    emaS.setData(pts.length >= EMA_SLOW ? ema(pts, EMA_SLOW) : []);
+    drawMarkers();
+  }
+
+  function drawPrevLine() {
+    if (prevLine) { price.removePriceLine(prevLine); prevLine = null; }
+    if (S.prev) prevLine = price.createPriceLine({price: S.prev, color: css("--muted"), lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "prev close"});
+  }
+
+  function drawMarkers() {
+    const times = series().map((b) => b.ts);
+    if (!times.length) { price.setMarkers([]); return; }
+    const snap = (ts) => {
+      const t = Math.floor(ts / 60) * 60; let best = times[0];
+      for (const x of times) { if (x <= t) best = x; else break; }
+      return best;
+    };
+    const colors = {critical: css("--crit"), warning: css("--warn"), info: css("--info")};
+    const markers = S.alerts.filter((a) => a.detector !== "feed" && a.detector !== "test").map((a) => {
+      const down = a.direction < 0;
+      const shape = a.direction > 0 ? "arrowUp" : a.direction < 0 ? "arrowDown" : "circle";
+      return {time: snap(a.ts) + S.offset, position: down ? "aboveBar" : "belowBar",
+              color: colors[a.severity] || colors.info, shape};
+    }).sort((x, y) => x.time - y.time);
+    price.setMarkers(markers);
+  }
+
+  function drawKpis() {
+    const v = S.last ? S.last.value : null;
+    $("k-last").textContent = fmt(v);
+    const el = $("k-chg");
+    if (v != null && S.prev) {
+      const d = v - S.prev, p = d / S.prev * 100;
+      el.textContent = `${p >= 0 ? "+" : ""}${p.toFixed(2)}%`;
+      el.className = "v " + (d >= 0 ? "up" : "down");
+      $("k-chg-abs").textContent = `${d >= 0 ? "+" : ""}${fmt(d)} points`;
+      $("k-chg-abs").className = "s " + (d >= 0 ? "up" : "down");
+    } else { el.textContent = "-"; el.className = "v"; $("k-chg-abs").textContent = ""; }
+    $("k-high").textContent = fmt(S.high);
+    $("k-low").textContent = fmt(S.low);
+    $("k-prev").textContent = fmt(S.prev);
+    const sg = S.status.sigma_1m;
+    $("k-sigma").textContent = sg ? (sg * 100).toFixed(3) + "%" : "-";
+    $("k-age").textContent = S.last ? pkt.format(new Date(S.last.ts * 1000)) : "-";
+    const m = $("market");
+    const open = !!S.status.market_open;
+    m.className = "pill " + (open ? "open" : "closed");
+    let label = open ? "Market open" : "Market closed";
+    if (!open && S.status.next_open) label += " · opens " + new Intl.DateTimeFormat("en-GB", {timeZone: "Asia/Karachi", weekday: "short", hour: "2-digit", minute: "2-digit"}).format(new Date(S.status.next_open * 1000));
+    if (S.status.failures) label += ` · ${S.status.failures} failed polls`;
+    m.lastElementChild.textContent = label;
+    $("sim").hidden = !S.status.simulated && !S.simulated;
+  }
+
+  function drawAlerts() {
+    const ul = $("alerts");
+    ul.replaceChildren();
+    if (!S.alerts.length) { const li = document.createElement("li"); li.className = "empty"; li.textContent = "No alerts yet."; ul.append(li); return; }
+    for (const a of S.alerts.slice().reverse()) {
+      const li = document.createElement("li");
+      const head = document.createElement("div");
+      const sev = document.createElement("span"); sev.className = "sev " + a.severity; sev.textContent = a.severity;
+      const at = document.createElement("span"); at.className = "at"; at.textContent = pkt.format(new Date(a.ts * 1000)) + " · " + a.detector;
+      head.append(sev, at);
+      const t = document.createElement("div"); t.className = "title"; t.textContent = a.title;
+      const d = document.createElement("div"); d.className = "detail"; d.textContent = a.detail;
+      li.append(head, t, d); ul.append(li);
+    }
+  }
+
+  function apply(msg) {
+    if (msg.type === "snapshot") {
+      S.offset = msg.tz_offset_s; S.bars = msg.bars || []; S.current = msg.current_bar; S.prev = msg.prev_close;
+      S.alerts = msg.alerts || []; S.status = msg.status || {}; S.last = msg.last; S.high = msg.high; S.low = msg.low;
+      S.simulated = msg.simulated;
+      drawPrevLine(); drawChart(); drawAlerts(); drawKpis(); chart.timeScale().fitContent();
+    } else if (msg.type === "update") {
+      if (msg.bars && msg.bars.length) S.bars.push(...msg.bars);
+      S.current = msg.current_bar; S.last = msg.last || S.last; S.high = msg.high; S.low = msg.low;
+      if (msg.prev_close !== S.prev) { S.prev = msg.prev_close; drawPrevLine(); }
+      if (msg.alerts && msg.alerts.length) { S.alerts.push(...msg.alerts); drawAlerts(); }
+      S.status = msg.status || S.status;
+      drawChart(); drawKpis();
+    } else if (msg.type === "status") {
+      S.status = msg.status || S.status; drawKpis();
+    }
+  }
+
+  let backoff = 1000, ping = null;
+  function connect() {
+    const ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+    const c = $("conn");
+    ws.onopen = () => { backoff = 1000; c.className = "pill live"; c.lastElementChild.textContent = "Live"; ping = setInterval(() => ws.readyState === 1 && ws.send("ping"), 25000); };
+    ws.onmessage = (e) => { try { apply(JSON.parse(e.data)); } catch (err) { console.error(err); } };
+    ws.onclose = () => {
+      clearInterval(ping); c.className = "pill down"; c.lastElementChild.textContent = "Reconnecting";
+      setTimeout(connect, backoff); backoff = Math.min(backoff * 2, 30000);
+    };
+  }
+  connect();
+})();
+</script>
+</body>
+</html>

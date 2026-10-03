@@ -1,0 +1,39 @@
+services:
+  kmi30:
+    build: .
+    image: kmi30-agent:0.1.0
+    container_name: kmi30-agent
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      KMI30_CONFIG: /config/config.yaml
+    volumes:
+      - ./config.yaml:/config/config.yaml:ro
+      - kmi30-data:/data
+    ports:
+      - "127.0.0.1:8080:8080"   # loopback only; front with a reverse proxy + SSO to expose
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "5"}
+
+  # Offline demo with synthetic data and no Slack: docker compose --profile demo up kmi30-demo
+  kmi30-demo:
+    profiles: ["demo"]
+    image: kmi30-agent:0.1.0
+    build: .
+    environment:
+      KMI30_SOURCE_MODE: simulated
+      KMI30_DB_PATH: /tmp/demo.db
+    ports:
+      - "127.0.0.1:8081:8080"
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+
+volumes:
+  kmi30-data:
