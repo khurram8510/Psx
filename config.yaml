@@ -3,12 +3,13 @@
 
 source:
   mode: live                    # live | simulated
+  feed: indices                 # indices (default, /indices page) | intraday (/timeseries/int/<symbol>)
   base_url: https://dps.psx.com.pk
   symbol: KMI30
   poll_interval_s: 10           # keep >= 10s; the portal stalls connections on request bursts
   request_timeout_s: 15
   max_backoff_s: 120
-  timestamp_mode: auto          # auto | pkt_wallclock | utc
+  timestamp_mode: auto          # intraday feed only: auto | pkt_wallclock | utc
 
 market:
   timezone: Asia/Karachi
@@ -27,7 +28,8 @@ detection:
   warmup_min: 15                # bar detectors silent after each session open
   cooldown_min: 15              # per alert key; a higher severity bypasses it
   ewma_lambda: 0.94
-  eod_vol_lookback: 20
+  daily_vol_lookback: 20        # daily closes recorded by the agent, used to seed volatility
+  default_daily_vol_pct: 1.0    # seed until 6 days of closes are recorded
   level:      {enabled: true, warning_pct: 1.0, critical_pct: 2.0, hysteresis_pct: 0.25}
   velocity:   {enabled: true, window_min: 5, warning_z: 3.0, critical_z: 4.5, rearm_z: 1.5}
   trend:      {enabled: true, fast: 5, slow: 20, confirm_bars: 2, slope_window: 10,

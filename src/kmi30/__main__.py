@@ -88,29 +88,36 @@ async def cmd_check(s: Settings) -> int:
     client = PSXClient(s.source, cal)
     rc = 0
     try:
-        for name, call in (("intraday", client.intraday), ("eod", client.eod), ("indices", client.indices_snapshot)):
+        print(f"feed: {s.source.feed}")
+        try:
+            snap = await client.indices_snapshot()
+            print(f"[ OK ] {s.source.base_url}/indices: {snap.symbol} current={snap.current:,.2f} "
+                  f"high={snap.high} low={snap.low} change={snap.change} ({snap.change_pct}%) "
+                  f"prev_close={snap.prev_close}")
+            if snap.prev_close is None:
+                print("[WARN] no change figure parsed: level alerts will use the last stored value as previous close")
+        except PSXError as exc:
+            print(f"[FAIL] {s.source.base_url}/indices: {exc}")
+            rc = 1
+        if s.source.feed == "intraday":
             try:
-                res = await call()
+                ticks = await client.intraday()
+                print(f"[ OK ] intraday: {len(ticks)} rows; newest={ticks[-1] if ticks else None}; "
+                      f"timestamp mode={client.timestamp_mode}")
             except PSXError as exc:
-                print(f"[FAIL] {name}: {exc}")
+                print(f"[FAIL] intraday: {exc}")
                 rc = 1
-                continue
-            if isinstance(res, list):
-                tail = res[-1] if res else None
-                print(f"[ OK ] {name}: {len(res)} rows; newest={tail}")
-            else:
-                print(f"[ OK ] {name}: {res}")
-        print(f"timestamp mode: {client.timestamp_mode}")
     finally:
         await client.aclose()
     return rc
 
 
-async def cmd_replay(s: Settings, day: str | None, ticks_file: str | None, notify: bool) -> int:
+async def cmd_replay(s: Settings, day: str | None, ticks_file: str | None, notify: bool,
+                     prev_close_arg: float | None) -> int:
     """Replay a stored day (or a PSX-shaped intraday JSON file) through the detectors."""
     from .alerts import SlackNotifier
     from .bars import BarBuilder
-    from .engine import DetectionEngine, daily_variance_from_eod
+    from .engine import DetectionEngine, daily_variance_from_closes
     from .models import Tick
     from .psx_client import PKT_OFFSET_S
     from .store import Store
@@ -132,11 +139,13 @@ async def cmd_replay(s: Settings, day: str | None, ticks_file: str | None, notif
         print("no ticks to replay")
         return 1
 
-    eod = [r for r in store.eod() if cal.local(datetime.fromtimestamp(r.ts, tz=timezone.utc)).date() < d]
-    prev_close = eod[-1].close if eod else None
+    prev_close = prev_close_arg or store.prev_close(d.isoformat())
+    lookback = s.detection.daily_vol_lookback
+    daily_var = daily_variance_from_closes(store.prev_closes(d.isoformat(), lookback + 1), lookback)
+    if daily_var is None:
+        daily_var = (s.detection.default_daily_vol_pct / 100) ** 2
     engine = DetectionEngine(s.detection, cal)
-    engine.start_session(prev_close, daily_variance_from_eod(eod, s.detection.eod_vol_lookback), None,
-                         cal.session_minutes(d))
+    engine.start_session(prev_close, daily_var, None, cal.session_minutes(d))
     builder = BarBuilder()
     alerts = []
     for t in ticks:
@@ -183,10 +192,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--json-logs", action="store_true", help="emit structured JSON logs")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("run", help="run the agent and web dashboard")
-    sub.add_parser("check", help="one-shot connectivity check against PSX")
+    sub.add_parser("check", help="one-shot check that the PSX indices page is reachable and parses")
     r = sub.add_parser("replay", help="replay a day through the detectors")
     r.add_argument("--date", help="YYYY-MM-DD from the local store (default: today)")
-    r.add_argument("--ticks-file", help="PSX-shaped intraday JSON file instead of the store")
+    r.add_argument("--ticks-file", help="PSX /timeseries/int JSON file instead of the store")
+    r.add_argument("--prev-close", type=float, help="previous close for level alerts (default: from the store)")
     r.add_argument("--notify", action="store_true", help="also send replayed alerts to Slack")
     sub.add_parser("slack-test", help="send a test message to Slack")
     args = p.parse_args(argv)
@@ -198,7 +208,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "check":
         return asyncio.run(cmd_check(s))
     if args.cmd == "replay":
-        return asyncio.run(cmd_replay(s, args.date, args.ticks_file, args.notify))
+        return asyncio.run(cmd_replay(s, args.date, args.ticks_file, args.notify, args.prev_close))
     if args.cmd == "slack-test":
         return asyncio.run(cmd_slack_test(s))
     return 2

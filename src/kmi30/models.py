@@ -49,14 +49,6 @@ class Bar:
         self.ticks += 1
 
 
-@dataclass(frozen=True, slots=True)
-class EodRow:
-    ts: int
-    close: float
-    volume: float
-    open: float
-
-
 @dataclass(slots=True)
 class Alert:
     detector: str

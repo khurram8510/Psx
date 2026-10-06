@@ -79,16 +79,6 @@ async def test_http_error_and_transport_error(calendar):
     await c.aclose()
 
 
-async def test_eod_field_order(calendar):
-    day = MON_10 + PKT_OFFSET_S
-    rows = [[day, 251_000.0, 1.2e8, 250_500.0], [day - 86400, 250_000.0, 1.1e8, 249_000.0]]
-    c = client_with(series(rows), calendar)
-    eod = await c.eod()
-    assert [r.close for r in eod] == [250_000.0, 251_000.0]
-    assert eod[-1].open == 250_500.0 and eod[-1].volume == 1.2e8
-    await c.aclose()
-
-
 INDICES_HTML = """
 <table class="tbl"><thead><tr><th>Index</th><th>High</th><th>Low</th><th>Current</th>
 <th>Change</th><th>% Change</th></tr></thead><tbody>
@@ -115,3 +105,18 @@ def test_parse_indices_without_headers_and_spaced_symbol():
 def test_parse_indices_missing_row():
     with pytest.raises(PSXSchemaError):
         parse_indices_html("<table><tr><td>KSE100</td><td>1</td><td>1</td><td>1</td></tr></table>", "KMI30")
+
+
+def test_parse_index_strip_fallback():
+    html = "<div class='topbar'><span>KSE100 170,511.85 812.10 (0.48%)</span>" \
+           "<span>KMI30 261,234.56 -1,234.44 (-0.47%)</span></div>"
+    snap = parse_indices_html(html, "KMI30")
+    assert snap.current == 261_234.56 and snap.change == -1234.44 and snap.change_pct == -0.47
+    assert snap.high is None and snap.prev_close == pytest.approx(262_469.0)
+
+
+async def test_indices_snapshot_over_http(calendar):
+    c = client_with(lambda r: httpx.Response(200, text=INDICES_HTML), calendar)
+    snap = await c.indices_snapshot()
+    assert snap.current == 261_234.56
+    await c.aclose()

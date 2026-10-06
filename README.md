@@ -1,7 +1,8 @@
 # KMI-30 Real-Time Monitor
 
-An agent that polls the official PSX Data Portal (`dps.psx.com.pk`) for the **KMI-30** index, serves a live
-web dashboard, and posts to **Slack** when the intraday trend deviates significantly.
+An agent that polls the official PSX Data Portal indices page (`https://dps.psx.com.pk/indices`) for the
+**KMI-30** index, serves a live web dashboard, and posts to **Slack** when the intraday trend deviates
+significantly.
 
 ![dashboard](docs/dashboard.png)
 
@@ -10,7 +11,7 @@ web dashboard, and posts to **Slack** when the intraday trend deviates significa
 ```bash
 cp .env.example .env              # add SLACK_WEBHOOK_URL
 docker compose up -d --build      # dashboard on http://localhost:8080
-docker compose exec kmi30 kmi30 check        # verify PSX connectivity and response format
+docker compose exec kmi30 kmi30 check        # verify the indices page is reachable and parses
 docker compose exec kmi30 kmi30 slack-test   # verify Slack delivery
 ```
 
@@ -29,23 +30,34 @@ docker compose --profile demo up --build kmi30-demo   # http://localhost:8081
 ## How it works
 
 ```
-PSX Data Portal ──poll 10s──▶ PSXClient ──ticks──▶ BarBuilder (1-min) ──▶ DetectionEngine ──▶ AlertGate ──▶ Slack
-   /timeseries/int/KMI30        │ schema checks                               │                      │
-   /timeseries/eod/KMI30        │ timestamp decoding                          ▼                      ▼
-   /indices (fallback)          ▼                                     SQLite (ticks, bars,     FastAPI + WebSocket
-                          MarketCalendar (PKT sessions, holidays)     EOD, alerts)             dashboard, /metrics
+PSX /indices ──poll 10s──▶ PSXClient ──snapshot──▶ BarBuilder (1-min) ──▶ DetectionEngine ──▶ AlertGate ──▶ Slack
+                             │ parse + validate                                 │                      │
+                             ▼                                                  ▼                      ▼
+                  MarketCalendar (PKT sessions, holidays)            SQLite (ticks, bars,     FastAPI + WebSocket
+                                                                     prev closes, alerts)     dashboard, /metrics
 ```
 
-| Endpoint | Shape | Use |
-|---|---|---|
-| `/timeseries/int/KMI30` | `{"status":1,"data":[[epoch, value, volume], ...]}`, newest first, today only | Primary feed |
-| `/timeseries/eod/KMI30` | `[[epoch, close, volume, open], ...]`, newest first | Previous close and daily volatility |
-| `/indices` | HTML table: index, high, low, current, change, % change | Fallback when the JSON feed fails |
+Every poll of `/indices` yields one reading for the chart and the detectors:
 
-PSX does not publish a contract for these endpoints. The client validates every response and raises
-`PSXSchemaError` on drift, which surfaces as feed alerts rather than silent bad data. PSX epochs are
-Pakistan wall-clock seconds rather than true UTC. With `timestamp_mode: auto`, the client picks whichever
-reading places the ticks inside trading sessions.
+| Field on the page | Used for |
+|---|---|
+| Current | The plotted value and every detector |
+| Change | Previous close, computed as current minus change, for the level detector and the dashboard |
+| High, Low | The dashboard's day range, which covers moves from before the agent started |
+
+PSX does not publish a contract for this page. The parser reads the indices table by its column headers,
+prefers each cell's `data-order` raw value, and falls back to the `KMI30 value change (pct%)` header-strip
+layout. Anything else raises `PSXSchemaError`, which surfaces as feed alerts rather than silent bad data.
+
+The page is a point-in-time snapshot with no history:
+
+- **Chart history starts when the agent starts.** It is not backfilled from PSX.
+- **Restarts lose nothing.** Every reading is stored in SQLite, and on start-up the agent rebuilds today's chart and detector state from it without re-alerting.
+- **Previous closes accumulate.** The agent records each day's previous close and uses that series to seed volatility. Until 6 days exist it uses `default_daily_vol_pct`.
+
+An opt-in `source.feed: intraday` mode polls `/timeseries/int/KMI30` instead. That JSON series backfills the
+whole day, and its epochs are Pakistan wall-clock seconds, which `timestamp_mode: auto` detects. In that mode
+the previous close is still read from `/indices`.
 
 ## Deviation detectors
 
@@ -58,7 +70,7 @@ All detectors run on event time, so a live run and a replay of the same data pro
 | `trend` | EMA5/EMA20 regime flip, held 2 bars, confirmed by 10-bar OLS slope | EMA gap ≥ 3σ | Trend reversals |
 | `cusum` | Two-sided CUSUM on standardised 1-min returns, each clipped to ±4 | k = 0.5, h = 5 | Sustained drift that no single bar reveals |
 | `vol_regime` | 15-min realised vol vs same-time-of-day history, or a slow intraday EWMA baseline | 2× warning, 3× critical | Volatility spikes |
-| `feed` | Wall-clock staleness and poll failures | 3 min stale, 5 failed polls, no data 30 min after open | Data-quality problems |
+| `feed` | Index value not moving, and poll failures | 3 min unchanged, 5 failed polls, no data 30 min after open | Data-quality problems |
 
 Noise controls:
 
@@ -72,8 +84,8 @@ Calibration: on a pure random walk at defaults, `trend` fires about 0.6 times pe
 than once per session. Tune on your own history before tightening thresholds:
 
 ```bash
-kmi30 replay --date 2026-09-14          # replay a stored day through the detectors
-kmi30 replay --ticks-file saved.json    # or a saved /timeseries/int response
+kmi30 replay --date 2026-09-14                        # replay a stored day through the detectors
+kmi30 replay --date 2026-09-14 --prev-close 262469.0  # override the stored previous close
 ```
 
 The `vol_regime` detector switches from the intraday baseline to the same-time-of-day profile automatically.
@@ -88,6 +100,7 @@ That happens after 5 sessions of history have accumulated in the database.
 | `SLACK_WEBHOOK_URL` | Slack Incoming Webhook (secret) |
 | `KMI30_DASHBOARD_URL` | URL for the "Open live view" button in Slack |
 | `KMI30_SOURCE_MODE` | `live` or `simulated` |
+| `KMI30_FEED` | `indices` (default) or `intraday` |
 | `KMI30_POLL_INTERVAL_S` | Poll interval in seconds, minimum 3 |
 | `KMI30_DB_PATH` | SQLite path |
 | `KMI30_CONFIG` | Config file path |
@@ -117,7 +130,8 @@ container runs as a non-root user with a read-only root filesystem and all capab
 ## Limitations
 
 - **Latency.** Polling is not a tick feed. Expect 10 to 20 seconds of lag on top of any delay in the portal itself. For trading-grade real-time data, use a licensed PSX market-data vendor.
-- **Undocumented source.** PSX can change or rate-limit these endpoints at any time. The `check` command and the `feed` alerts are how you find out.
+- **Resolution.** Ten-second snapshots give about six readings per minute. Moves that reverse between polls are not seen.
+- **Undocumented source.** PSX can change or rate-limit the page at any time. The `check` command and the `feed` alerts are how you find out.
 - **Terms of use.** This is built for personal monitoring. Review PSX's terms before redistributing the data.
 - **Not investment advice.** Alerts are statistical signals.
 

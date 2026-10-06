@@ -2,8 +2,8 @@ import math
 
 from kmi30.bars import BarBuilder
 from kmi30.config import DetectionConfig
-from kmi30.engine import AlertGate, DetectionEngine, daily_variance_from_eod, variance_profile
-from kmi30.models import Alert, Bar, EodRow, Severity, Tick
+from kmi30.engine import AlertGate, DetectionEngine, daily_variance_from_closes, variance_profile
+from kmi30.models import Alert, Bar, Severity, Tick
 
 from .conftest import pkt
 from .helpers import START, bars_from_closes, random_walk
@@ -66,10 +66,10 @@ def test_gate_cooldown_and_escalation():
 
 
 def test_daily_variance_and_profile(calendar):
-    rows = [EodRow(i * 86400, 100 * math.exp(0.01 * (-1) ** i), 0, 0) for i in range(30)]
-    var = daily_variance_from_eod(rows, 20)
+    closes = [100 * math.exp(0.01 * (-1) ** i) for i in range(30)]
+    var = daily_variance_from_closes(closes, 20)
     assert var is not None and 0.0003 < var < 0.0005
-    assert daily_variance_from_eod(rows[:3], 20) is None
+    assert daily_variance_from_closes(closes[:3], 20) is None
     bars = bars_from_closes(random_walk(30, 0.001, seed=2))
     prof = variance_profile({"d1": bars, "d2": bars}, calendar)
     assert prof and all(v > 0 for v in prof.values())

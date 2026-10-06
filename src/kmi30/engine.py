@@ -18,7 +18,7 @@ from .detectors import (
     VolatilityRegime,
 )
 from .market_calendar import MarketCalendar
-from .models import Alert, Bar, EodRow, Tick
+from .models import Alert, Bar, Tick
 
 GAP_S = 5 * 60  # bars further apart than this are treated as a session break or feed gap
 
@@ -57,8 +57,9 @@ class AlertGate:
             self.last[a.key] = (a.ts, int(a.severity))
 
 
-def daily_variance_from_eod(rows: list[EodRow], lookback: int) -> float | None:
-    closes = [r.close for r in rows[-(lookback + 1):]]
+def daily_variance_from_closes(closes: list[float], lookback: int) -> float | None:
+    """Variance of daily log returns from chronological closes; None with fewer than 6 closes."""
+    closes = closes[-(lookback + 1):]
     if len(closes) < 6:
         return None
     rets = [math.log(b / a) for a, b in zip(closes, closes[1:]) if a > 0 and b > 0]

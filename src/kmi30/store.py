@@ -6,7 +6,7 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from .models import Alert, Bar, EodRow, Severity, Tick
+from .models import Alert, Bar, Severity, Tick
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS ticks (
@@ -15,8 +15,8 @@ CREATE TABLE IF NOT EXISTS ticks (
 CREATE TABLE IF NOT EXISTS bars (
   ts INTEGER PRIMARY KEY, open REAL, high REAL, low REAL, close REAL, volume REAL, ticks INTEGER
 );
-CREATE TABLE IF NOT EXISTS eod (
-  ts INTEGER PRIMARY KEY, close REAL NOT NULL, volume REAL, open REAL
+CREATE TABLE IF NOT EXISTS sessions (
+  day TEXT PRIMARY KEY, prev_close REAL NOT NULL
 );
 CREATE TABLE IF NOT EXISTS alerts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -75,19 +75,32 @@ class Store:
             ).fetchall()
         return [Tick(*r) for r in rows]
 
-    def upsert_eod(self, rows: list[EodRow]) -> None:
-        if not rows:
-            return
+    def set_prev_close(self, day: str, value: float) -> None:
         with self._lock:
-            self._db.executemany(
-                "INSERT OR REPLACE INTO eod(ts, close, volume, open) VALUES (?,?,?,?)",
-                [(r.ts, r.close, r.volume, r.open) for r in rows],
-            )
+            self._db.execute("INSERT OR REPLACE INTO sessions(day, prev_close) VALUES (?,?)", (day, value))
 
-    def eod(self) -> list[EodRow]:
+    def prev_close(self, day: str) -> float | None:
         with self._lock:
-            rows = self._db.execute("SELECT ts, close, volume, open FROM eod ORDER BY ts").fetchall()
-        return [EodRow(*r) for r in rows]
+            row = self._db.execute("SELECT prev_close FROM sessions WHERE day = ?", (day,)).fetchone()
+        return row[0] if row else None
+
+    def prev_closes(self, through_day: str, limit: int) -> list[float]:
+        """Previous closes recorded for sessions up to and including ``through_day``, oldest first.
+
+        Consecutive sessions' previous closes form a daily close series for volatility estimates.
+        """
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT prev_close FROM sessions WHERE day <= ? ORDER BY day DESC LIMIT ?", (through_day, limit)
+            ).fetchall()
+        return [r[0] for r in reversed(rows)]
+
+    def last_tick_before(self, ts: int) -> Tick | None:
+        with self._lock:
+            row = self._db.execute(
+                "SELECT ts, value, volume, source FROM ticks WHERE ts < ? ORDER BY ts DESC LIMIT 1", (ts,)
+            ).fetchone()
+        return Tick(*row) if row else None
 
     def add_alert(self, a: Alert, delivered: bool) -> None:
         with self._lock:

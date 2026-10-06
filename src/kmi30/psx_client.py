@@ -1,13 +1,13 @@
 """Client for the PSX Data Portal (dps.psx.com.pk).
 
-The portal has no published API contract. Known behaviour, verified against community
-documentation of the portal:
+The portal has no published API contract. Known behaviour, from community documentation:
 
-* ``GET /timeseries/int/{SYM}`` -> ``{"status":1,"message":"","data":[[epoch, value, volume], ...]}``
-  newest first, current trading day only; ``status: 0`` with a message for unknown symbols.
-* ``GET /timeseries/eod/{SYM}`` -> ``data: [[epoch, close, volume, open], ...]`` newest first.
-* Epochs are Pakistan wall-clock seconds (UTC+5 read as UTC), not true UTC.
-* ``GET /indices`` is an HTML table: index, high, low, current, change, % change.
+* ``GET /indices`` is an HTML table: index, high, low, current, change, % change. This is the
+  default feed: each poll yields the current value, day high/low, and the change vs previous
+  close (so previous close = current - change).
+* ``GET /timeseries/int/{SYM}`` (opt-in feed) ->
+  ``{"status":1,"message":"","data":[[epoch, value, volume], ...]}`` newest first, current trading
+  day only. Epochs are Pakistan wall-clock seconds (UTC+5 read as UTC), not true UTC.
 * No WAF, but request bursts make connections hang, so callers must stay polite.
 """
 from __future__ import annotations
@@ -23,7 +23,7 @@ from bs4 import BeautifulSoup
 
 from .config import SourceConfig
 from .market_calendar import MarketCalendar
-from .models import EodRow, Tick
+from .models import Tick
 
 log = logging.getLogger(__name__)
 
@@ -173,26 +173,6 @@ class PSXClient:
         ticks = {self._to_utc(ts, mode): Tick(self._to_utc(ts, mode), v, vol) for ts, v, vol in parsed}
         return [ticks[k] for k in sorted(ticks)]
 
-    async def eod(self) -> list[EodRow]:
-        """Daily history, oldest first. Row layout is [epoch, close, volume, open]."""
-        path = f"/timeseries/eod/{self.cfg.symbol}"
-        rows = await self._get_series(path)
-        mode = self._ts_mode or "pkt_wallclock"
-        out: dict[int, EodRow] = {}
-        for row in rows:
-            if not isinstance(row, (list, tuple)) or len(row) < 2:
-                raise PSXSchemaError(f"{path}: unexpected row shape {row!r}")
-            try:
-                ts = self._to_utc(int(row[0]), mode)
-                close = float(row[1])
-                vol = float(row[2]) if len(row) > 2 and row[2] is not None else 0.0
-                opn = float(row[3]) if len(row) > 3 and row[3] is not None else close
-            except (TypeError, ValueError) as exc:
-                raise PSXSchemaError(f"{path}: non-numeric row {row!r}") from exc
-            if close > 0:
-                out[ts] = EodRow(ts, close, vol, opn)
-        return [out[k] for k in sorted(out)]
-
     async def indices_snapshot(self) -> IndexSnapshot:
         """Fallback: scrape the /indices HTML table for the configured symbol."""
         resp = await self._get("/indices")
@@ -225,7 +205,22 @@ def parse_indices_html(html: str, symbol: str) -> IndexSnapshot:
                 return values[i] if i is not None and i < len(values) else None
 
             return IndexSnapshot(symbol, current, pick("high"), pick("low"), pick("change"), pick("change_pct"))
+    snap = _parse_index_strip(soup.get_text(" ", strip=True), symbol)
+    if snap:
+        return snap
     raise PSXSchemaError(f"/indices: no row found for {symbol}")
+
+
+def _parse_index_strip(text: str, symbol: str) -> IndexSnapshot | None:
+    """Fallback for the portal's header strip layout: ``KMI30 261,234.56 -1,234.44 (-0.47%)``."""
+    sym = r"[\s\-]?".join(re.escape(c) for c in _norm_symbol(symbol))
+    m = re.search(rf"\b{sym}\b\s+([\d,]+\.?\d*)\s+([+\-\u2212]?[\d,]+\.?\d*)\s+\(\s*([+\-\u2212]?[\d.]+)\s*%\s*\)", text)
+    if not m:
+        return None
+    current = _num(m.group(1))
+    if current is None or current <= 0:
+        return None
+    return IndexSnapshot(symbol, current, None, None, _num(m.group(2)), _num(m.group(3)))
 
 
 def _cell_value(cell) -> float | None:

@@ -19,15 +19,17 @@ DEFAULT_SESSIONS: dict[str, list[tuple[str, str]]] = {
 
 class SourceConfig(BaseModel):
     mode: Literal["live", "simulated"] = "live"
+    # indices: poll the /indices page (default). intraday: poll /timeseries/int/{symbol} (opt-in).
+    feed: Literal["indices", "intraday"] = "indices"
     base_url: str = "https://dps.psx.com.pk"
     symbol: str = "KMI30"
     poll_interval_s: float = Field(10.0, ge=3.0)
     request_timeout_s: float = Field(15.0, gt=0)
     max_backoff_s: float = Field(120.0, gt=0)
-    # PSX encodes timestamps as Pakistan wall-clock seconds. "auto" detects this per response.
+    # Intraday feed only: PSX encodes timestamps as Pakistan wall-clock seconds. "auto" detects it.
     timestamp_mode: Literal["auto", "pkt_wallclock", "utc"] = "auto"
     user_agent: str = "Mozilla/5.0 (X11; Linux x86_64) kmi30-agent/0.1"
-    # Simulator speed-up factor, only used when mode == "simulated".
+    # Simulator speed-up factor, only used when mode == "simulated". Poll interval is in simulated time.
     sim_speed: float = Field(30.0, gt=0)
 
 
@@ -100,7 +102,9 @@ class DetectionConfig(BaseModel):
     warmup_min: int = Field(15, ge=0)
     cooldown_min: int = Field(15, ge=0)
     ewma_lambda: float = Field(0.94, gt=0, lt=1)
-    eod_vol_lookback: int = Field(20, ge=5)
+    daily_vol_lookback: int = Field(20, ge=5)
+    # Seeds one-minute volatility until enough stored daily closes exist to estimate it.
+    default_daily_vol_pct: float = Field(1.0, gt=0)
     level: LevelConfig = LevelConfig()
     velocity: VelocityConfig = VelocityConfig()
     trend: TrendConfig = TrendConfig()
@@ -142,6 +146,7 @@ _ENV_MAP: dict[str, tuple[str, ...]] = {
     "SLACK_WEBHOOK_URL": ("slack", "webhook_url"),
     "KMI30_DASHBOARD_URL": ("slack", "dashboard_url"),
     "KMI30_SOURCE_MODE": ("source", "mode"),
+    "KMI30_FEED": ("source", "feed"),
     "KMI30_POLL_INTERVAL_S": ("source", "poll_interval_s"),
     "KMI30_DB_PATH": ("storage", "path"),
     "KMI30_WEB_PORT": ("web", "port"),

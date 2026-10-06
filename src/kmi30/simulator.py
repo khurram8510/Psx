@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import math
 import random
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
 import httpx
 
@@ -44,7 +44,7 @@ class SimulatedPortal:
 
     def _close_for(self, d: date) -> float:
         if d not in self._closes:
-            rng = random.Random(f"{self.seed}-eod-{d.isoformat()}")
+            rng = random.Random(f"{self.seed}-close-{d.isoformat()}")
             idx = (d - date(2020, 1, 1)).days
             self._closes[d] = BASE_LEVEL * math.exp(0.02 * math.sin(idx / 9) + rng.gauss(0, 0.011))
         return self._closes[d]
@@ -89,14 +89,6 @@ class SimulatedPortal:
             pts = [p for p in self._path(today) if p[0] <= now_ts]
             data = [[ts + PKT_OFFSET_S, v, vol] for ts, v, vol in reversed(pts)]
             return httpx.Response(200, json={"status": 1, "message": "", "data": data})
-        if path == f"/timeseries/eod/{self.symbol}":
-            days = self._trading_days_before(today, 120)
-            rows = []
-            for d in reversed(days):
-                c = self._close_for(d)
-                ts = int(datetime(d.year, d.month, d.day, tzinfo=timezone.utc).timestamp())
-                rows.append([ts, round(c, 2), 1.5e8, round(c * 0.999, 2)])
-            return httpx.Response(200, json={"status": 1, "message": "", "data": rows})
         if path == "/indices":
             pts = [p for p in self._path(today) if p[0] <= now_ts]
             prev = self._close_for(self._trading_days_before(today, 1)[0])
