@@ -13,6 +13,8 @@ from .models import Alert, Bar, Tick
 
 log = logging.getLogger(__name__)
 
+MAX_TICKS = 20_000  # about 9 hours of 10-second readings; oldest dropped beyond this
+
 
 def _bar(b: Bar) -> dict:
     return {"ts": b.ts, "o": b.open, "h": b.high, "l": b.low, "c": b.close, "v": b.volume}
@@ -26,6 +28,8 @@ class Hub:
         self.day: str | None = None
         self.prev_close: float | None = None
         self.bars: list[dict] = []
+        self.ticks: list[list[float]] = []  # every reading today as [ts, value], for short zoom windows
+        self._pending_ticks: list[list[float]] = []
         self.current_bar: dict | None = None
         self.last: dict | None = None
         self.high: float | None = None
@@ -38,6 +42,8 @@ class Hub:
         self.day = day
         self.prev_close = prev_close
         self.bars = [_bar(b) for b in bars]
+        self.ticks = []
+        self._pending_ticks = []
         self.current_bar = None
         self.last = None
         self.high = max((b.high for b in bars), default=None)
@@ -52,6 +58,7 @@ class Hub:
             "tz_offset_s": self.tz_offset_s,
             "prev_close": self.prev_close,
             "bars": self.bars,
+            "ticks": self.ticks,
             "current_bar": self.current_bar,
             "last": self.last,
             "high": self.high,
@@ -61,6 +68,11 @@ class Hub:
         }
 
     def on_tick(self, t: Tick, current: Bar | None) -> None:
+        point = [t.ts, t.value]
+        self.ticks.append(point)
+        self._pending_ticks.append(point)
+        if len(self.ticks) > MAX_TICKS:
+            del self.ticks[: len(self.ticks) - MAX_TICKS]
         self.last = {"ts": t.ts, "value": t.value, "source": t.source}
         self.high = t.value if self.high is None else max(self.high, t.value)
         self.low = t.value if self.low is None else min(self.low, t.value)
@@ -75,10 +87,16 @@ class Hub:
     async def publish(self, msg_type: str, **payload: Any) -> None:
         await self.broadcast({"type": msg_type, **payload})
 
+    def mark_synced(self) -> None:
+        """Readings already included in a broadcast snapshot must not be sent again as an update."""
+        self._pending_ticks = []
+
     async def push_update(self, new_bars: list[Bar], new_alerts: list[Alert]) -> None:
+        ticks, self._pending_ticks = self._pending_ticks, []
         await self.broadcast({
             "type": "update",
             "bars": [_bar(b) for b in new_bars],
+            "ticks": ticks,
             "current_bar": self.current_bar,
             "last": self.last,
             "high": self.high,

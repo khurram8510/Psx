@@ -27,6 +27,17 @@ docker compose --profile demo up --build kmi30-demo   # http://localhost:8081
 2. Choose **Add New Webhook to Workspace** and pick the channel.
 3. Put the URL in `.env` as `SLACK_WEBHOOK_URL`. Treat it as a secret, because anyone holding it can post.
 
+### Dashboard
+
+- **Range buttons.** Choose the last 5 minutes, 30 minutes, 1 hour, or the whole day above the chart.
+- **Custom range.** Choose Custom and enter any duration from 1 minute to 24 hours.
+- **Live follow.** A selected range keeps sliding forward as new readings arrive.
+- **Manual zoom.** Scrolling or dragging on the chart switches to a manual view that live updates leave alone. Pick a range again to resume following.
+- **Remembered choice.** The browser keeps your last range across reloads.
+
+The price line plots every reading, about six a minute on the indices feed, so short windows show real
+detail. The EMA overlays and the alert detectors work on one-minute bars.
+
 ## How it works
 
 ```

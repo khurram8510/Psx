@@ -97,6 +97,7 @@ class Agent:
         self.hub.reset_day(d.isoformat(), self.prev_close, today_alerts, [])
         self._replay_stored_ticks(day_start)
         await self.hub.broadcast(self.hub.snapshot())  # connected browsers drop yesterday's chart
+        self.hub.mark_synced()
         self.store.prune(int((now - timedelta(days=self.s.storage.retention_days)).timestamp()))
         log.info("day %s: prev_close=%s daily_sigma=%.4f%% profile_minutes=%d replayed_ticks=%s",
                  d, self.prev_close, daily_var ** 0.5 * 100, len(profile), self.last_tick_ts is not None)

@@ -43,6 +43,21 @@ h1{font-size:20px;margin:0;font-weight:650;letter-spacing:-.01em}
 @media (max-width:960px){.grid{grid-template-columns:1fr}}
 .panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px;min-width:0}
 .panel h2{font-size:13px;margin:0 0 8px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.chart-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-bottom:8px}
+.chart-head h2{margin:0}
+.range{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-left:auto}
+.range button{background:transparent;color:var(--muted);border:0;border-left:1px solid var(--line);padding:5px 11px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;min-height:30px}
+.range button:first-child{border-left:0}
+.range button:hover{color:var(--ink);background:var(--chip)}
+.range button[aria-pressed="true"]{background:var(--accent);color:#fff}
+.range button:focus-visible,.custom input:focus-visible,.custom select:focus-visible,.custom button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.custom{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 8px;font-size:13px;color:var(--muted)}
+.custom[hidden]{display:none}
+.custom input,.custom select{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font:inherit;font-size:13px}
+.custom input{width:84px}
+.custom button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:5px 12px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
+.custom .err{color:var(--down)}
+.range-note{font-size:12px;color:var(--muted);min-height:16px;margin-top:6px}
 #chart{height:440px;width:100%}
 @media (max-width:600px){#chart{height:320px}}
 .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--muted);margin-top:8px}
@@ -83,8 +98,28 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
 
   <section class="grid">
     <div class="panel">
-      <h2>Intraday, 1-minute closes</h2>
+      <div class="chart-head">
+        <h2>Intraday</h2>
+        <div class="range" id="range" role="group" aria-label="Chart time range">
+          <button type="button" data-range="300" aria-pressed="false">5m</button>
+          <button type="button" data-range="1800" aria-pressed="false">30m</button>
+          <button type="button" data-range="3600" aria-pressed="false">1h</button>
+          <button type="button" data-range="day" aria-pressed="true">Day</button>
+          <button type="button" data-range="custom" aria-pressed="false" aria-expanded="false" aria-controls="custom">Custom</button>
+        </div>
+      </div>
+      <form id="custom" class="custom" hidden novalidate>
+        <label for="custom-n">Last</label>
+        <input id="custom-n" type="number" inputmode="numeric" min="1" step="1" value="15" aria-describedby="custom-err">
+        <select id="custom-unit" aria-label="Unit">
+          <option value="60">minutes</option>
+          <option value="3600">hours</option>
+        </select>
+        <button type="submit">Apply</button>
+        <span id="custom-err" class="err" role="alert"></span>
+      </form>
       <div id="chart"></div>
+      <div class="range-note" id="range-note" aria-live="polite"></div>
       <div class="legend">
         <span><span class="sw" style="background:var(--accent)"></span>KMI-30</span>
         <span><span class="sw" style="background:var(--ema-fast)"></span>EMA 5</span>
@@ -109,9 +144,21 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
   const pkt = new Intl.DateTimeFormat("en-GB", {timeZone: "Asia/Karachi", hour: "2-digit", minute: "2-digit", second: "2-digit"});
   const EMA_FAST = 5, EMA_SLOW = 20;
   // Chart times are already shifted to PKT wall-clock, so format them as UTC.
-  const hhmm = (t) => { const d = new Date(t * 1000); return String(d.getUTCHours()).padStart(2, "0") + ":" + String(d.getUTCMinutes()).padStart(2, "0"); };
+  const two = (n) => String(n).padStart(2, "0");
+  const hhmm = (t) => { const d = new Date(t * 1000); return two(d.getUTCHours()) + ":" + two(d.getUTCMinutes()); };
+  const hhmmss = (t) => hhmm(t) + ":" + two(new Date(t * 1000).getUTCSeconds());
+  const TICK_WITH_SECONDS = 4;  // LightweightCharts.TickMarkType.TimeWithSeconds
 
-  const S = {offset: 18000, bars: [], current: null, prev: null, alerts: [], status: {}, last: null, high: null, low: null};
+  const S = {offset: 18000, bars: [], ticks: [], current: null, prev: null, alerts: [], status: {}, last: null, high: null, low: null};
+  const MAX_WINDOW_S = 24 * 3600;
+  // Chart range: "day" fits the whole session; a number shows the last N seconds and follows live data;
+  // "manual" means the viewer zoomed or panned by hand, so live updates leave the view alone.
+  const R = {mode: "day", seconds: null, customSeconds: 900};
+  try {
+    const saved = JSON.parse(localStorage.getItem("kmi30-range") || "null");
+    if (saved && (saved.mode === "day" || (saved.seconds > 0 && saved.seconds <= MAX_WINDOW_S))) Object.assign(R, saved);
+    if (R.mode === "manual") R.mode = "day";
+  } catch (_) {}
 
   try { const t = localStorage.getItem("kmi30-theme"); if (t) document.documentElement.dataset.theme = t; } catch (_) {}
   $("theme").onclick = () => {
@@ -128,14 +175,17 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
     layout: {background: {type: "solid", color: "transparent"}, textColor: css("--muted"), fontSize: 12},
     grid: {vertLines: {color: css("--line")}, horzLines: {color: css("--line")}},
     rightPriceScale: {borderColor: css("--line")},
-    timeScale: {borderColor: css("--line"), timeVisible: true, secondsVisible: false,
-                tickMarkFormatter: (t) => hhmm(t)},
+    timeScale: {borderColor: css("--line"), timeVisible: true, secondsVisible: true,
+                tickMarkFormatter: (t, type) => type === TICK_WITH_SECONDS ? hhmmss(t) : hhmm(t)},
     crosshair: {mode: 0},
-    localization: {locale: "en-US", priceFormatter: (p) => fmt(p), timeFormatter: (t) => hhmm(t)},
+    localization: {locale: "en-US", priceFormatter: (p) => fmt(p), timeFormatter: (t) => hhmmss(t)},
   });
   const price = chart.addLineSeries({color: css("--accent"), lineWidth: 2, priceLineVisible: true});
-  const emaF = chart.addLineSeries({color: css("--ema-fast"), lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false});
-  const emaS = chart.addLineSeries({color: css("--ema-slow"), lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false});
+  // EMA overlays must not stretch the price axis: in a 5-minute window a lagging EMA would flatten the price line.
+  const overlay = {lineWidth: 1, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false,
+                   autoscaleInfoProvider: () => null};
+  const emaF = chart.addLineSeries({...overlay, color: css("--ema-fast")});
+  const emaS = chart.addLineSeries({...overlay, color: css("--ema-slow")});
   let prevLine = null;
 
   function applyTheme() {
@@ -156,16 +206,27 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
     return all;
   }
 
+  // Price line uses every reading so short windows have detail; falls back to bar closes.
+  function pricePoints() {
+    if (S.ticks.length) return S.ticks.map(([ts, v]) => ({time: ts + S.offset, value: v}));
+    return series().map((b) => ({time: b.ts + S.offset, value: b.c}));
+  }
+
+  function addTicks(list) {
+    let last = S.ticks.length ? S.ticks[S.ticks.length - 1][0] : -Infinity;
+    for (const t of list || []) { if (t[0] > last) { S.ticks.push(t); last = t[0]; } }
+  }
+
   function ema(points, n) {
     const a = 2 / (n + 1); let e = null;
     return points.map((p) => { e = e == null ? p.value : e + a * (p.value - e); return {time: p.time, value: e}; });
   }
 
   function drawChart() {
-    const pts = series().map((b) => ({time: b.ts + S.offset, value: b.c}));
-    price.setData(pts);
-    emaF.setData(pts.length >= EMA_FAST ? ema(pts, EMA_FAST) : []);
-    emaS.setData(pts.length >= EMA_SLOW ? ema(pts, EMA_SLOW) : []);
+    price.setData(pricePoints());
+    const closes = series().map((b) => ({time: b.ts + S.offset, value: b.c}));
+    emaF.setData(closes.length >= EMA_FAST ? ema(closes, EMA_FAST) : []);
+    emaS.setData(closes.length >= EMA_SLOW ? ema(closes, EMA_SLOW) : []);
     drawMarkers();
   }
 
@@ -175,11 +236,11 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
   }
 
   function drawMarkers() {
-    const times = series().map((b) => b.ts);
+    const times = pricePoints().map((p) => p.time - S.offset);
     if (!times.length) { price.setMarkers([]); return; }
-    const snap = (ts) => {
-      const t = Math.floor(ts / 60) * 60; let best = times[0];
-      for (const x of times) { if (x <= t) best = x; else break; }
+    const snap = (ts) => {  // markers must sit on a time that exists in the price series
+      let best = times[0];
+      for (const x of times) { if (x <= ts) best = x; else break; }
       return best;
     };
     const colors = {critical: css("--crit"), warning: css("--warn"), info: css("--info")};
@@ -235,19 +296,117 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
     }
   }
 
+  function durationLabel(s) {
+    if (s % 3600 === 0) return s / 3600 === 1 ? "1 hour" : `${s / 3600} hours`;
+    return s / 60 === 1 ? "1 minute" : `${Math.round(s / 60)} minutes`;
+  }
+
+  let programmatic = false;
+  function setVisible(fn) {
+    programmatic = true;
+    try { fn(); } finally { requestAnimationFrame(() => { programmatic = false; }); }
+  }
+
+  function applyRange() {
+    const pts = pricePoints();
+    let note = "";
+    if (!pts.length) {
+      note = "Waiting for data.";
+    } else if (R.mode === "manual") {
+      note = "Custom zoom. Choose a range to follow live data again.";
+    } else if (R.mode === "day" || !R.seconds) {
+      setVisible(() => chart.timeScale().fitContent());
+      note = "Showing the whole session.";
+    } else {
+      const first = pts[0].time, last = pts[pts.length - 1].time;
+      const from = last - R.seconds;
+      setVisible(() => chart.timeScale().setVisibleRange({from: Math.max(from, first), to: last}));
+      note = `Showing the last ${R.seconds === 3600 ? "hour" : durationLabel(R.seconds)}, following live data.`;
+      if (from < first) note += " Less data is available than that, so the full history is shown.";
+    }
+    $("range-note").textContent = note;
+    syncButtons();
+  }
+
+  function syncButtons() {
+    for (const b of $("range").querySelectorAll("button")) {
+      const r = b.dataset.range;
+      const on = R.mode === "day" ? r === "day"
+        : R.mode === "preset" ? Number(r) === R.seconds
+        : R.mode === "custom" ? r === "custom" : false;
+      b.setAttribute("aria-pressed", String(on));
+    }
+    const label = $("range").querySelector('[data-range="custom"]');
+    label.textContent = R.mode === "custom" ? `Custom: ${durationLabel(R.seconds)}` : "Custom";
+  }
+
+  function saveRange() {
+    try { localStorage.setItem("kmi30-range", JSON.stringify({mode: R.mode, seconds: R.seconds, customSeconds: R.customSeconds})); } catch (_) {}
+  }
+
+  function setRange(mode, seconds) {
+    R.mode = mode; R.seconds = seconds;
+    saveRange(); applyRange();
+  }
+
+  function toggleCustom(open) {
+    const form = $("custom"), btn = $("range").querySelector('[data-range="custom"]');
+    form.hidden = !open; btn.setAttribute("aria-expanded", String(open));
+    if (open) {
+      const s = R.customSeconds || 900;
+      const hours = s % 3600 === 0;
+      $("custom-unit").value = hours ? "3600" : "60";
+      $("custom-n").value = hours ? s / 3600 : Math.round(s / 60);
+      $("custom-err").textContent = "";
+      $("custom-n").focus(); $("custom-n").select();
+    }
+  }
+
+  $("range").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    const r = b.dataset.range;
+    if (r === "custom") { toggleCustom($("custom").hidden); return; }
+    toggleCustom(false);
+    if (r === "day") setRange("day", null); else setRange("preset", Number(r));
+  });
+
+  $("custom").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const n = Number($("custom-n").value), unit = Number($("custom-unit").value);
+    const seconds = Math.round(n * unit);
+    if (!Number.isFinite(n) || n <= 0 || seconds < 60) { $("custom-err").textContent = "Enter at least 1 minute."; return; }
+    if (seconds > MAX_WINDOW_S) { $("custom-err").textContent = "Maximum is 24 hours."; return; }
+    R.customSeconds = seconds;
+    toggleCustom(false);
+    setRange("custom", seconds);
+  });
+  $("custom").addEventListener("keydown", (e) => { if (e.key === "Escape") toggleCustom(false); });
+
+  // Zooming or panning by hand switches to manual so live updates stop moving the view.
+  const chartEl = $("chart");
+  let dragX = null;
+  const goManual = () => { if (!programmatic && R.mode !== "manual") { R.mode = "manual"; applyRange(); } };
+  chartEl.addEventListener("wheel", goManual, {passive: true});
+  chartEl.addEventListener("pointerdown", (e) => { dragX = e.clientX; });
+  chartEl.addEventListener("pointermove", (e) => { if (dragX !== null && e.buttons && Math.abs(e.clientX - dragX) > 4) { dragX = null; goManual(); } });
+  window.addEventListener("pointerup", () => { dragX = null; });
+  syncButtons();
+
   function apply(msg) {
     if (msg.type === "snapshot") {
-      S.offset = msg.tz_offset_s; S.bars = msg.bars || []; S.current = msg.current_bar; S.prev = msg.prev_close;
+      S.offset = msg.tz_offset_s; S.bars = msg.bars || []; S.ticks = (msg.ticks || []).slice(); S.current = msg.current_bar; S.prev = msg.prev_close;
       S.alerts = msg.alerts || []; S.status = msg.status || {}; S.last = msg.last; S.high = msg.high; S.low = msg.low;
       S.simulated = msg.simulated;
-      drawPrevLine(); drawChart(); drawAlerts(); drawKpis(); chart.timeScale().fitContent();
+      drawPrevLine(); drawChart(); drawAlerts(); drawKpis(); applyRange();
     } else if (msg.type === "update") {
       if (msg.bars && msg.bars.length) S.bars.push(...msg.bars);
+      addTicks(msg.ticks);
       S.current = msg.current_bar; S.last = msg.last || S.last; S.high = msg.high; S.low = msg.low;
       if (msg.prev_close !== S.prev) { S.prev = msg.prev_close; drawPrevLine(); }
       if (msg.alerts && msg.alerts.length) { S.alerts.push(...msg.alerts); drawAlerts(); }
       S.status = msg.status || S.status;
       drawChart(); drawKpis();
+      if (R.mode !== "manual") applyRange();
     } else if (msg.type === "status") {
       S.status = msg.status || S.status; drawKpis();
     }
