@@ -21,6 +21,7 @@
   --ema-fast:#f0a63a;--ema-slow:#a58cff;--chip:#222831;
 }
 *{box-sizing:border-box}
+[hidden]{display:none !important}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
 .wrap{max-width:1280px;margin:0 auto;padding:16px}
 header{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-bottom:14px}
@@ -31,6 +32,7 @@ h1{font-size:20px;margin:0;font-weight:650;letter-spacing:-.01em}
 .pill.live .dot{background:var(--up)} .pill.down .dot{background:var(--down)}
 .sim{background:var(--warn);color:#1b1300}
 .spacer{flex:1}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;margin-bottom:14px}
 .kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px}
 .kpi .l{color:var(--muted);font-size:12px}
@@ -58,6 +60,21 @@ h1{font-size:20px;margin:0;font-weight:650;letter-spacing:-.01em}
 .custom button{background:var(--accent);color:#fff;border:0;border-radius:6px;padding:5px 12px;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}
 .custom .err{color:var(--down)}
 .range-note{font-size:12px;color:var(--muted);min-height:16px;margin-top:6px}
+.day-select{background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:8px;padding:5px 8px;font:inherit;font-size:12.5px;font-weight:600;min-height:30px;max-width:100%}
+.day-select:focus-visible,.btn-link:focus-visible,.hist-table button:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.pill.hist{background:var(--accent);color:#fff}
+.history{margin-top:14px}
+.btn-link{margin-left:auto;font-size:12.5px;font-weight:600;color:var(--accent);text-decoration:none;border:1px solid var(--line);border-radius:8px;padding:5px 10px}
+.btn-link:hover{background:var(--chip)}
+#daily-chart{height:200px;width:100%;margin-bottom:10px}
+.table-wrap{position:relative;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.hist-table{width:100%;border-collapse:collapse;font-variant-numeric:tabular-nums;font-size:13px;white-space:nowrap}
+.hist-table th{color:var(--muted);font-weight:600;font-size:12px;text-align:right;padding:6px 8px;border-bottom:1px solid var(--line)}
+.hist-table td{text-align:right;padding:7px 8px;border-bottom:1px solid var(--line)}
+.hist-table th:first-child,.hist-table td:first-child{text-align:left}
+.hist-table tr.sel td{background:var(--chip)}
+.hist-table button{background:transparent;color:var(--accent);border:0;font:inherit;font-weight:600;cursor:pointer;padding:2px 4px}
+.hist-table a{color:var(--accent);font-weight:600;text-decoration:none;margin-left:6px}
 #chart{height:440px;width:100%}
 @media (max-width:600px){#chart{height:320px}}
 .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--muted);margin-top:8px}
@@ -87,19 +104,23 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
   </header>
 
   <section class="kpis">
-    <div class="kpi big"><div class="l">KMI-30</div><div class="v" id="k-last">-</div></div>
+    <div class="kpi big"><div class="l" id="k-last-label">KMI-30</div><div class="v" id="k-last">-</div></div>
     <div class="kpi big"><div class="l">Change vs prev close</div><div class="v" id="k-chg">-</div><div class="s" id="k-chg-abs"></div></div>
     <div class="kpi"><div class="l">Day high</div><div class="v" id="k-high">-</div></div>
     <div class="kpi"><div class="l">Day low</div><div class="v" id="k-low">-</div></div>
     <div class="kpi"><div class="l">Previous close</div><div class="v" id="k-prev">-</div></div>
     <div class="kpi"><div class="l">1-min volatility</div><div class="v" id="k-sigma">-</div></div>
-    <div class="kpi"><div class="l">Last update</div><div class="v" id="k-age">-</div></div>
+    <div class="kpi"><div class="l" id="k-age-label">Last update</div><div class="v" id="k-age">-</div></div>
   </section>
 
   <section class="grid">
     <div class="panel">
       <div class="chart-head">
         <h2>Intraday</h2>
+        <select id="day-select" class="day-select" aria-label="Trading day to show">
+          <option value="">Today (live)</option>
+        </select>
+        <span id="hist-pill" class="pill hist" hidden>Stored history</span>
         <div class="range" id="range" role="group" aria-label="Chart time range">
           <button type="button" data-range="300" aria-pressed="false">5m</button>
           <button type="button" data-range="1800" aria-pressed="false">30m</button>
@@ -128,8 +149,24 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
       </div>
     </div>
     <div class="panel">
-      <h2>Alerts today</h2>
+      <h2 id="alerts-title">Alerts today</h2>
       <ul id="alerts"><li class="empty">No alerts yet.</li></ul>
+    </div>
+  </section>
+  <section class="panel history" aria-labelledby="hist-title">
+    <div class="chart-head">
+      <h2 id="hist-title">Daily history</h2>
+      <a id="daily-csv" class="btn-link" href="/api/history/daily.csv" download>Download daily CSV</a>
+    </div>
+    <div id="daily-chart" hidden></div>
+    <p id="daily-empty" class="empty">History builds up as the agent records each trading day.</p>
+    <div class="table-wrap">
+      <table class="hist-table" id="daily-table" hidden>
+        <thead><tr><th scope="col">Date</th><th scope="col">Open</th><th scope="col">High</th><th scope="col">Low</th>
+          <th scope="col">Close</th><th scope="col">Change</th><th scope="col">%</th><th scope="col">Readings</th>
+          <th scope="col">Alerts</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+        <tbody></tbody>
+      </table>
     </div>
   </section>
   <footer id="foot">Source: PSX Data Portal. Times in Pakistan Standard Time. Statistical signals, not investment advice.</footer>
@@ -149,7 +186,10 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
   const hhmmss = (t) => hhmm(t) + ":" + two(new Date(t * 1000).getUTCSeconds());
   const TICK_WITH_SECONDS = 4;  // LightweightCharts.TickMarkType.TimeWithSeconds
 
-  const S = {offset: 18000, bars: [], ticks: [], current: null, prev: null, alerts: [], status: {}, last: null, high: null, low: null};
+  // LIVE always tracks the WebSocket feed. S is what the page displays: LIVE, or a stored day.
+  const LIVE = {offset: 18000, bars: [], ticks: [], current: null, prev: null, alerts: [], status: {}, last: null, high: null, low: null, day: null};
+  let S = LIVE;
+  const isLive = () => S === LIVE;
   const MAX_WINDOW_S = 24 * 3600;
   // Chart range: "day" fits the whole session; a number shows the last N seconds and follows live data;
   // "manual" means the viewer zoomed or panned by hand, so live updates leave the view alone.
@@ -198,6 +238,11 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
     emaF.applyOptions({color: css("--ema-fast")});
     emaS.applyOptions({color: css("--ema-slow")});
     drawPrevLine(); drawMarkers();
+    if (typeof dailyChart !== "undefined") {
+      dailyChart.applyOptions({layout: {textColor: css("--muted")}, grid: {horzLines: {color: css("--line")}},
+                               rightPriceScale: {borderColor: css("--line")}, timeScale: {borderColor: css("--line")}});
+      dailyLine.applyOptions({color: css("--accent")});
+    }
   }
 
   function series() {
@@ -212,9 +257,9 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
     return series().map((b) => ({time: b.ts + S.offset, value: b.c}));
   }
 
-  function addTicks(list) {
-    let last = S.ticks.length ? S.ticks[S.ticks.length - 1][0] : -Infinity;
-    for (const t of list || []) { if (t[0] > last) { S.ticks.push(t); last = t[0]; } }
+  function addTicks(target, list) {
+    let last = target.ticks.length ? target.ticks[target.ticks.length - 1][0] : -Infinity;
+    for (const t of list || []) { if (t[0] > last) { target.ticks.push(t); last = t[0]; } }
   }
 
   function ema(points, n) {
@@ -255,6 +300,8 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
 
   function drawKpis() {
     const v = S.last ? S.last.value : null;
+    $("k-last-label").textContent = isLive() ? "KMI-30" : `Close, ${S.day}`;
+    $("k-age-label").textContent = isLive() ? "Last update" : "Last reading";
     $("k-last").textContent = fmt(v);
     const el = $("k-chg");
     if (v != null && S.prev) {
@@ -267,17 +314,22 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
     $("k-high").textContent = fmt(S.high);
     $("k-low").textContent = fmt(S.low);
     $("k-prev").textContent = fmt(S.prev);
-    const sg = S.status.sigma_1m;
+    const sg = isLive() ? LIVE.status.sigma_1m : null;
     $("k-sigma").textContent = sg ? (sg * 100).toFixed(3) + "%" : "-";
     $("k-age").textContent = S.last ? pkt.format(new Date(S.last.ts * 1000)) : "-";
-    const m = $("market");
-    const open = !!S.status.market_open;
+    drawMarket();
+  }
+
+  // Market and feed status always describe the live agent, whichever day is displayed.
+  function drawMarket() {
+    const st = LIVE.status, m = $("market");
+    const open = !!st.market_open;
     m.className = "pill " + (open ? "open" : "closed");
     let label = open ? "Market open" : "Market closed";
-    if (!open && S.status.next_open) label += " · opens " + new Intl.DateTimeFormat("en-GB", {timeZone: "Asia/Karachi", weekday: "short", hour: "2-digit", minute: "2-digit"}).format(new Date(S.status.next_open * 1000));
-    if (S.status.failures) label += ` · ${S.status.failures} failed polls`;
+    if (!open && st.next_open) label += " · opens " + new Intl.DateTimeFormat("en-GB", {timeZone: "Asia/Karachi", weekday: "short", hour: "2-digit", minute: "2-digit"}).format(new Date(st.next_open * 1000));
+    if (st.failures) label += ` · ${st.failures} failed polls`;
     m.lastElementChild.textContent = label;
-    $("sim").hidden = !S.status.simulated && !S.simulated;
+    $("sim").hidden = !st.simulated && !LIVE.simulated;
   }
 
   function drawAlerts() {
@@ -313,15 +365,16 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
     if (!pts.length) {
       note = "Waiting for data.";
     } else if (R.mode === "manual") {
-      note = "Custom zoom. Choose a range to follow live data again.";
+      note = isLive() ? "Custom zoom. Choose a range to follow live data again." : "Custom zoom.";
     } else if (R.mode === "day" || !R.seconds) {
       setVisible(() => chart.timeScale().fitContent());
-      note = "Showing the whole session.";
+      note = isLive() ? "Showing the whole session." : `Showing all of ${S.day}.`;
     } else {
       const first = pts[0].time, last = pts[pts.length - 1].time;
       const from = last - R.seconds;
       setVisible(() => chart.timeScale().setVisibleRange({from: Math.max(from, first), to: last}));
-      note = `Showing the last ${R.seconds === 3600 ? "hour" : durationLabel(R.seconds)}, following live data.`;
+      const span = R.seconds === 3600 ? "hour" : durationLabel(R.seconds);
+      note = isLive() ? `Showing the last ${span}, following live data.` : `Showing the last ${span} of ${S.day}.`;
       if (from < first) note += " Less data is available than that, so the full history is shown.";
     }
     $("range-note").textContent = note;
@@ -392,25 +445,131 @@ button.theme{background:var(--chip);color:var(--ink);border:1px solid var(--line
   window.addEventListener("pointerup", () => { dragX = null; });
   syncButtons();
 
+  function redrawAll() {
+    drawPrevLine(); drawChart(); drawAlerts(); drawKpis(); applyRange();
+  }
+
   function apply(msg) {
+    const L = LIVE;
     if (msg.type === "snapshot") {
-      S.offset = msg.tz_offset_s; S.bars = msg.bars || []; S.ticks = (msg.ticks || []).slice(); S.current = msg.current_bar; S.prev = msg.prev_close;
-      S.alerts = msg.alerts || []; S.status = msg.status || {}; S.last = msg.last; S.high = msg.high; S.low = msg.low;
-      S.simulated = msg.simulated;
-      drawPrevLine(); drawChart(); drawAlerts(); drawKpis(); applyRange();
+      const newDay = L.day !== msg.day;
+      L.offset = msg.tz_offset_s; L.bars = msg.bars || []; L.ticks = (msg.ticks || []).slice(); L.current = msg.current_bar; L.prev = msg.prev_close;
+      L.alerts = msg.alerts || []; L.status = msg.status || {}; L.last = msg.last; L.high = msg.high; L.low = msg.low;
+      L.simulated = msg.simulated; L.day = msg.day;
+      if (newDay) loadDays();
+      if (isLive()) redrawAll(); else drawMarket();
     } else if (msg.type === "update") {
-      if (msg.bars && msg.bars.length) S.bars.push(...msg.bars);
-      addTicks(msg.ticks);
-      S.current = msg.current_bar; S.last = msg.last || S.last; S.high = msg.high; S.low = msg.low;
-      if (msg.prev_close !== S.prev) { S.prev = msg.prev_close; drawPrevLine(); }
-      if (msg.alerts && msg.alerts.length) { S.alerts.push(...msg.alerts); drawAlerts(); }
-      S.status = msg.status || S.status;
+      if (msg.bars && msg.bars.length) L.bars.push(...msg.bars);
+      addTicks(L, msg.ticks);
+      L.current = msg.current_bar; L.last = msg.last || L.last; L.high = msg.high; L.low = msg.low;
+      const prevChanged = msg.prev_close !== L.prev;
+      L.prev = msg.prev_close;
+      if (msg.alerts && msg.alerts.length) L.alerts.push(...msg.alerts);
+      L.status = msg.status || L.status;
+      if (!isLive()) { drawMarket(); return; }
+      if (prevChanged) drawPrevLine();
+      if (msg.alerts && msg.alerts.length) drawAlerts();
       drawChart(); drawKpis();
       if (R.mode !== "manual") applyRange();
     } else if (msg.type === "status") {
-      S.status = msg.status || S.status; drawKpis();
+      L.status = msg.status || L.status;
+      if (isLive()) drawKpis(); else drawMarket();
     }
   }
+
+  // ---------- stored history ----------
+  const dayFmt = new Intl.DateTimeFormat("en-GB", {timeZone: "UTC", weekday: "short", day: "numeric", month: "short", year: "numeric"});
+  const prettyDay = (d) => dayFmt.format(new Date(d + "T00:00:00Z"));
+  let DAYS = [];
+
+  const dailyChart = LightweightCharts.createChart($("daily-chart"), {
+    autoSize: true,
+    layout: {background: {type: "solid", color: "transparent"}, textColor: css("--muted"), fontSize: 12},
+    grid: {vertLines: {visible: false}, horzLines: {color: css("--line")}},
+    rightPriceScale: {borderColor: css("--line")},
+    timeScale: {borderColor: css("--line")},
+    localization: {locale: "en-US", priceFormatter: (p) => fmt(p)},
+    handleScroll: false, handleScale: false,
+  });
+  const dailyLine = dailyChart.addLineSeries({color: css("--accent"), lineWidth: 2, priceLineVisible: false});
+
+  async function loadDays() {
+    try {
+      const r = await fetch("/api/history/days?limit=3650");
+      if (!r.ok) return;
+      DAYS = (await r.json()).days || [];
+    } catch (_) { return; }
+    drawDays();
+  }
+
+  function drawDays() {
+    const sel = $("day-select"), keep = sel.value;
+    sel.replaceChildren(new Option("Today (live)", ""));
+    for (const d of DAYS) if (d.day !== LIVE.day) sel.add(new Option(prettyDay(d.day), d.day));
+    sel.value = [...sel.options].some((o) => o.value === keep) ? keep : "";
+
+    const has = DAYS.length > 0;
+    $("daily-empty").hidden = has;
+    $("daily-table").hidden = !has;
+    $("daily-chart").hidden = DAYS.length < 2;
+    const pts = DAYS.slice().reverse().map((d) => ({time: d.day, value: d.close}));
+    dailyLine.setData(pts);
+    if (pts.length >= 2) dailyChart.timeScale().fitContent();
+
+    const tb = $("daily-table").tBodies[0];
+    tb.replaceChildren();
+    for (const d of DAYS) {
+      const tr = tb.insertRow();
+      if ((isLive() && d.day === LIVE.day) || d.day === S.day) tr.className = "sel";
+      const cells = [prettyDay(d.day) + (d.day === LIVE.day ? " (today)" : ""), fmt(d.open), fmt(d.high), fmt(d.low), fmt(d.close),
+        d.change == null ? "-" : `${d.change >= 0 ? "+" : ""}${fmt(d.change)}`,
+        d.change_pct == null ? "-" : `${d.change_pct >= 0 ? "+" : ""}${d.change_pct.toFixed(2)}%`,
+        d.readings.toLocaleString("en-US"), String(d.alerts)];
+      cells.forEach((text, i) => {
+        const td = tr.insertCell(); td.textContent = text;
+        if ((i === 5 || i === 6) && d.change != null) td.className = d.change >= 0 ? "up" : "down";
+      });
+      const act = tr.insertCell();
+      const view = document.createElement("button");
+      view.type = "button"; view.textContent = "View"; view.setAttribute("aria-label", `View ${d.day} on the chart`);
+      view.onclick = () => { $("day-select").value = d.day === LIVE.day ? "" : d.day; showDay($("day-select").value); window.scrollTo({top: 0, behavior: "smooth"}); };
+      const csv = document.createElement("a");
+      csv.href = `/api/history/${d.day}/readings.csv`; csv.textContent = "CSV"; csv.setAttribute("download", "");
+      csv.setAttribute("aria-label", `Download readings for ${d.day} as CSV`);
+      act.append(view, csv);
+    }
+  }
+
+  async function showDay(day) {
+    if (!day || day === LIVE.day) {
+      S = LIVE;
+    } else {
+      let data;
+      try {
+        const r = await fetch(`/api/history/${encodeURIComponent(day)}`);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        data = await r.json();
+      } catch (err) {
+        $("range-note").textContent = `Could not load ${day}: ${err.message}`;
+        $("day-select").value = isLive() ? "" : S.day;
+        return;
+      }
+      const last = data.ticks.length ? data.ticks[data.ticks.length - 1] : null;
+      const sm = data.summary || {};
+      S = {offset: data.tz_offset_s, bars: data.bars || [], ticks: data.ticks || [], current: null, prev: data.prev_close,
+           alerts: data.alerts || [], status: {}, last: last ? {ts: last[0], value: last[1]} : null,
+           high: sm.high ?? null, low: sm.low ?? null, day: data.day};
+    }
+    $("hist-pill").hidden = isLive();
+    $("alerts-title").textContent = isLive() ? "Alerts today" : `Alerts on ${prettyDay(S.day)}`;
+    if (R.mode === "manual") R.mode = "day";
+    redrawAll();
+    drawDays();
+  }
+
+  $("day-select").addEventListener("change", (e) => showDay(e.target.value));
+  loadDays();
+  setInterval(() => { if (document.visibilityState === "visible") loadDays(); }, 60_000);
 
   let backoff = 1000, ping = null;
   function connect() {

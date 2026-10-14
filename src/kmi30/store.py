@@ -6,11 +6,17 @@ import sqlite3
 import threading
 from pathlib import Path
 
-from .models import Alert, Bar, Severity, Tick
+from .models import Alert, Bar, DaySummary, Severity, Tick
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS ticks (
-  ts INTEGER PRIMARY KEY, value REAL NOT NULL, volume REAL NOT NULL DEFAULT 0, source TEXT NOT NULL
+  ts INTEGER PRIMARY KEY, value REAL NOT NULL, volume REAL NOT NULL DEFAULT 0, source TEXT NOT NULL,
+  high REAL, low REAL, change REAL, change_pct REAL
+);
+CREATE TABLE IF NOT EXISTS daily (
+  day TEXT PRIMARY KEY, open REAL NOT NULL, high REAL NOT NULL, low REAL NOT NULL, close REAL NOT NULL,
+  prev_close REAL, readings INTEGER NOT NULL, alerts INTEGER NOT NULL, first_ts INTEGER NOT NULL,
+  last_ts INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS bars (
   ts INTEGER PRIMARY KEY, open REAL, high REAL, low REAL, close REAL, volume REAL, ticks INTEGER
@@ -26,6 +32,8 @@ CREATE TABLE IF NOT EXISTS alerts (
 );
 CREATE INDEX IF NOT EXISTS alerts_ts ON alerts(ts);
 """
+_TICK_COLS = "ts, value, volume, source, high, low, change, change_pct"
+_DAILY_COLS = "day, open, high, low, close, prev_close, readings, alerts, first_ts, last_ts"
 
 
 class Store:
@@ -38,6 +46,14 @@ class Store:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.execute("PRAGMA synchronous=NORMAL")
             self._db.executescript(_SCHEMA)
+            self._migrate()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was first created. Idempotent."""
+        cols = {r[1] for r in self._db.execute("PRAGMA table_info(ticks)")}
+        for name in ("high", "low", "change", "change_pct"):
+            if name not in cols:
+                self._db.execute(f"ALTER TABLE ticks ADD COLUMN {name} REAL")
 
     def close(self) -> None:
         with self._lock:
@@ -48,8 +64,9 @@ class Store:
             return
         with self._lock:
             self._db.executemany(
-                "INSERT OR REPLACE INTO ticks(ts, value, volume, source) VALUES (?,?,?,?)",
-                [(t.ts, t.value, t.volume, t.source) for t in ticks],
+                "INSERT OR REPLACE INTO ticks(ts, value, volume, source, high, low, change, change_pct)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                [(t.ts, t.value, t.volume, t.source, t.high, t.low, t.change, t.change_pct) for t in ticks],
             )
 
     def add_bar(self, b: Bar) -> None:
@@ -70,7 +87,7 @@ class Store:
     def ticks_between(self, start_ts: int, end_ts: int) -> list[Tick]:
         with self._lock:
             rows = self._db.execute(
-                "SELECT ts, value, volume, source FROM ticks WHERE ts >= ? AND ts < ? ORDER BY ts",
+                f"SELECT {_TICK_COLS} FROM ticks WHERE ts >= ? AND ts < ? ORDER BY ts",
                 (start_ts, end_ts),
             ).fetchall()
         return [Tick(*r) for r in rows]
@@ -98,7 +115,7 @@ class Store:
     def last_tick_before(self, ts: int) -> Tick | None:
         with self._lock:
             row = self._db.execute(
-                "SELECT ts, value, volume, source FROM ticks WHERE ts < ? ORDER BY ts DESC LIMIT 1", (ts,)
+                f"SELECT {_TICK_COLS} FROM ticks WHERE ts < ? ORDER BY ts DESC LIMIT 1", (ts,)
             ).fetchone()
         return Tick(*row) if row else None
 
@@ -112,16 +129,43 @@ class Store:
             )
 
     def alerts_since(self, ts: int) -> list[Alert]:
+        return self.alerts_between(ts, 2**62)
+
+    def alerts_between(self, start_ts: int, end_ts: int) -> list[Alert]:
         with self._lock:
             rows = self._db.execute(
                 "SELECT detector, key, severity, title, detail, ts, value, metrics, direction FROM alerts"
-                " WHERE ts >= ? ORDER BY ts",
-                (ts,),
+                " WHERE ts >= ? AND ts < ? ORDER BY ts",
+                (start_ts, end_ts),
             ).fetchall()
         return [
             Alert(d, k, Severity(s), t, det, ts_, v or 0.0, json.loads(m or "{}"), dr)
             for d, k, s, t, det, ts_, v, m, dr in rows
         ]
+
+    def upsert_daily(self, d: DaySummary) -> None:
+        with self._lock:
+            self._db.execute(
+                f"INSERT OR REPLACE INTO daily({_DAILY_COLS}) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (d.day, d.open, d.high, d.low, d.close, d.prev_close, d.readings, d.alerts, d.first_ts, d.last_ts),
+            )
+
+    def daily(self, day: str) -> DaySummary | None:
+        with self._lock:
+            row = self._db.execute(f"SELECT {_DAILY_COLS} FROM daily WHERE day = ?", (day,)).fetchone()
+        return DaySummary(*row) if row else None
+
+    def daily_range(self, start_day: str = "0000-00-00", end_day: str = "9999-99-99",
+                    limit: int | None = None) -> list[DaySummary]:
+        """Daily summaries between two days inclusive, newest first."""
+        sql = f"SELECT {_DAILY_COLS} FROM daily WHERE day >= ? AND day <= ? ORDER BY day DESC"
+        args: tuple = (start_day, end_day)
+        if limit is not None:
+            sql += " LIMIT ?"
+            args += (limit,)
+        with self._lock:
+            rows = self._db.execute(sql, args).fetchall()
+        return [DaySummary(*r) for r in rows]
 
     def prune(self, before_ts: int) -> None:
         with self._lock:

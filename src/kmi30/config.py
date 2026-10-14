@@ -129,7 +129,8 @@ class WebConfig(BaseModel):
 
 class StorageConfig(BaseModel):
     path: str = "data/kmi30.db"
-    retention_days: int = Field(120, ge=7)
+    # Days of readings, bars and alerts to keep. 0 keeps everything; daily summaries are never pruned.
+    retention_days: int = Field(0, ge=0)
 
 
 class Settings(BaseModel):

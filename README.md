@@ -34,6 +34,8 @@ docker compose --profile demo up --build kmi30-demo   # http://localhost:8081
 - **Live follow.** A selected range keeps sliding forward as new readings arrive.
 - **Manual zoom.** Scrolling or dragging on the chart switches to a manual view that live updates leave alone. Pick a range again to resume following.
 - **Remembered choice.** The browser keeps your last range across reloads.
+- **Past days.** The day picker beside the chart title redraws any stored day, with its alerts and summary figures. Live updates keep arriving in the background, and choosing "Today (live)" returns to them.
+- **Daily history.** The panel under the chart plots each day's close and lists open, high, low, close, change, readings and alerts per day, with CSV downloads.
 
 The price line plots every reading, about six a minute on the indices feed, so short windows show real
 detail. The EMA overlays and the alert detectors work on one-minute bars.
@@ -101,6 +103,48 @@ kmi30 replay --date 2026-09-14 --prev-close 262469.0  # override the stored prev
 
 The `vol_regime` detector switches from the intraday baseline to the same-time-of-day profile automatically.
 That happens after 5 sessions of history have accumulated in the database.
+
+## Historical data
+
+The agent stores everything it observes in a local SQLite database, `/data/kmi30.db` in the
+container, on the `kmi30-data` Docker volume. History is kept indefinitely unless you set
+`storage.retention_days`.
+
+| Table | Contents | Written |
+|---|---|---|
+| `ticks` | Every reading: time, value, and the page's day high, day low, change and % change | Every poll, about every 10 seconds |
+| `bars` | One-minute open, high, low and close | Each completed minute |
+| `daily` | Per day: open, high, low, close, previous close, readings and alert counts | Every poll, so today's row is always current |
+| `sessions` | Previous close published on the indices page per day | Once per day |
+| `alerts` | Every alert raised, with its delivery status | As alerts fire |
+
+Monitoring runs throughout each trading session. The agent idles outside market hours and resumes at
+the next open, and it is safe to leave running continuously. Databases from earlier versions are
+upgraded in place on start-up.
+
+Getting data out:
+
+```bash
+# One day's readings, or the daily summary table, as CSV
+docker compose exec kmi30 kmi30 export --date 2026-10-14 > kmi30-2026-10-14.csv
+docker compose exec kmi30 kmi30 export --daily --from 2026-10-01 > kmi30-daily.csv
+
+# Consistent copy of the whole database while the agent is running
+docker compose exec kmi30 python -c "import sqlite3; sqlite3.connect('/data/kmi30.db').backup(sqlite3.connect('/data/backup.db'))"
+docker compose cp kmi30:/data/backup.db ./kmi30-backup.db
+```
+
+The same data is available over HTTP:
+
+| Endpoint | Returns |
+|---|---|
+| `/api/history/days?limit=N` | Daily summaries, newest first, as JSON |
+| `/api/history/YYYY-MM-DD` | One day's readings, bars, alerts and summary as JSON |
+| `/api/history/YYYY-MM-DD/readings.csv` | One day's readings as CSV |
+| `/api/history/daily.csv?from=&to=` | Daily summaries as CSV, both dates optional |
+
+Do not copy `kmi30.db` directly while the agent is running. SQLite keeps recent writes in a separate
+WAL file, so a plain file copy can miss them. Use the backup command above.
 
 ## Configuration
 

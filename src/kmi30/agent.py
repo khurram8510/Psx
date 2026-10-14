@@ -17,7 +17,7 @@ from .detectors import FeedHealth
 from .engine import DetectionEngine, daily_variance_from_closes, variance_profile
 from .hub import Hub
 from .market_calendar import MarketCalendar
-from .models import Alert, Bar, Tick
+from .models import Alert, Bar, DaySummary, Tick
 from .psx_client import IndexSnapshot, PSXClient, PSXError
 from .store import Store
 
@@ -60,6 +60,7 @@ class Agent:
         self._snapshot: IndexSnapshot | None = None
         self._prev_close_attempt = float("-inf")
         self._prev_close_recorded = False
+        self.summary: DaySummary | None = None  # today's open/high/low/close, persisted every cycle
         self._queue: asyncio.Queue[Alert] = asyncio.Queue(maxsize=1000)
 
     # ---------- day lifecycle ----------
@@ -78,6 +79,7 @@ class Agent:
         self.last_value = 0.0
         self.caught_up = False
         self._snapshot = None
+        self.summary = None
         self.feed.reset()
 
         day_start = self._day_start_ts(d)
@@ -98,7 +100,8 @@ class Agent:
         self._replay_stored_ticks(day_start)
         await self.hub.broadcast(self.hub.snapshot())  # connected browsers drop yesterday's chart
         self.hub.mark_synced()
-        self.store.prune(int((now - timedelta(days=self.s.storage.retention_days)).timestamp()))
+        if self.s.storage.retention_days > 0:
+            self.store.prune(int((now - timedelta(days=self.s.storage.retention_days)).timestamp()))
         log.info("day %s: prev_close=%s daily_sigma=%.4f%% profile_minutes=%d replayed_ticks=%s",
                  d, self.prev_close, daily_var ** 0.5 * 100, len(profile), self.last_tick_ts is not None)
 
@@ -126,6 +129,27 @@ class Agent:
         if t.value != self.last_value:
             self.last_change_ts = t.ts
         self.last_tick_ts, self.last_value = t.ts, t.value
+        self._update_summary(t)
+
+    def _update_summary(self, t: Tick) -> None:
+        hi = max(v for v in (t.value, t.high) if v is not None)
+        lo = min(v for v in (t.value, t.low) if v is not None)
+        s = self.summary
+        if s is None:
+            self.summary = DaySummary(self.day.isoformat(), t.value, hi, lo, t.value, self.prev_close,
+                                      1, 0, t.ts, t.ts)
+            return
+        s.high, s.low = max(s.high, hi), min(s.low, lo)
+        s.close, s.last_ts = t.value, t.ts
+        s.readings += 1
+
+    def _save_summary(self) -> None:
+        """Persist today's summary so history survives crashes and is queryable mid-session."""
+        if self.summary is None:
+            return
+        self.summary.prev_close = self.prev_close
+        self.summary.alerts = sum(1 for a in self.hub.alerts if a.get("detector") != "test")
+        self.store.upsert_daily(self.summary)
 
     def _set_prev_close(self, value: float | None) -> None:
         """Apply the previous close published on the indices page; persist it once per day."""
@@ -162,7 +186,8 @@ class Agent:
         snap = await self.client.indices_snapshot()
         self._snapshot = snap
         self._set_prev_close(snap.prev_close)
-        return [Tick(int(now.timestamp()), snap.current, 0.0, "indices")]
+        return [Tick(int(now.timestamp()), snap.current, 0.0, "indices",
+                     snap.high, snap.low, snap.change, snap.change_pct)]
 
     async def _confirm_prev_close(self) -> None:
         """Intraday feed has no change figure, so read previous close from /indices once a day."""
@@ -250,6 +275,8 @@ class Agent:
                                   self.last_change_ts, self.failures, self.last_value)
         for a in alerts:
             self._emit(a)
+        if fresh or alerts:
+            self._save_summary()
 
         self._update_status(now, session_open=True)
         await self.hub.push_update(new_bars, alerts)
@@ -271,6 +298,7 @@ class Agent:
         alerts = self.engine.on_bar(bar)
         for a in alerts:
             self._emit(a)
+        self._save_summary()
         await self.hub.push_update([bar], alerts)
 
     async def _idle(self, now: datetime) -> float:

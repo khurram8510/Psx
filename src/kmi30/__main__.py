@@ -169,6 +169,44 @@ async def cmd_replay(s: Settings, day: str | None, ticks_file: str | None, notif
     return 0
 
 
+def cmd_export(s: Settings, day: str | None, daily: bool, start: str | None, end: str | None,
+               out: str | None) -> int:
+    """Write stored history as CSV: one day's readings, or the daily summary table."""
+    from .history import daily_csv, day_bounds, parse_day, readings_csv
+    from .store import Store
+
+    cal = MarketCalendar(s.market)
+    store = Store(s.storage.path)
+    try:
+        if daily:
+            lo = parse_day(start).isoformat() if start else "0000-00-00"
+            hi = parse_day(end).isoformat() if end else "9999-99-99"
+            rows = store.daily_range(lo, hi)
+            if not rows:
+                print("no daily history stored", file=sys.stderr)
+                return 1
+            body = daily_csv(rows, cal.tz)
+        else:
+            d = parse_day(day) if day else cal.local(datetime.now(timezone.utc)).date()
+            ticks = store.ticks_between(*day_bounds(d, cal.tz))
+            if not ticks:
+                print(f"no readings stored for {d}", file=sys.stderr)
+                return 1
+            body = readings_csv(ticks, cal.tz)
+    except ValueError as exc:
+        print(f"invalid date: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        store.close()
+    if out:
+        with open(out, "w", newline="") as fh:
+            fh.write(body)
+        print(f"wrote {out}", file=sys.stderr)
+    else:
+        sys.stdout.write(body)
+    return 0
+
+
 async def cmd_slack_test(s: Settings) -> int:
     from .alerts import SlackNotifier
     from .models import Alert, Severity
@@ -198,6 +236,12 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--ticks-file", help="PSX /timeseries/int JSON file instead of the store")
     r.add_argument("--prev-close", type=float, help="previous close for level alerts (default: from the store)")
     r.add_argument("--notify", action="store_true", help="also send replayed alerts to Slack")
+    e = sub.add_parser("export", help="write stored history as CSV")
+    e.add_argument("--date", help="YYYY-MM-DD readings to export (default: today)")
+    e.add_argument("--daily", action="store_true", help="export the daily summary table instead")
+    e.add_argument("--from", dest="start", help="with --daily: first day, YYYY-MM-DD")
+    e.add_argument("--to", dest="end", help="with --daily: last day, YYYY-MM-DD")
+    e.add_argument("-o", "--out", help="output file (default: stdout)")
     sub.add_parser("slack-test", help="send a test message to Slack")
     args = p.parse_args(argv)
 
@@ -209,6 +253,8 @@ def main(argv: list[str] | None = None) -> int:
         return asyncio.run(cmd_check(s))
     if args.cmd == "replay":
         return asyncio.run(cmd_replay(s, args.date, args.ticks_file, args.notify, args.prev_close))
+    if args.cmd == "export":
+        return cmd_export(s, args.date, args.daily, args.start, args.end, args.out)
     if args.cmd == "slack-test":
         return asyncio.run(cmd_slack_test(s))
     return 2

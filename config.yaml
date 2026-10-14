@@ -50,6 +50,6 @@ web:
 
 storage:
   path: data/kmi30.db           # overridden to /data/kmi30.db in the container
-  retention_days: 120
+  retention_days: 0             # 0 keeps all history; N deletes readings, bars and alerts older than N days
 
 log_level: INFO

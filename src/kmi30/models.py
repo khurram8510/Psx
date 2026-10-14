@@ -23,10 +23,46 @@ class Tick:
     value: float
     volume: float = 0.0
     source: str = "intraday"
+    # Day-level figures published alongside the value on the indices page, kept for history.
+    high: float | None = None
+    low: float | None = None
+    change: float | None = None
+    change_pct: float | None = None
 
     @property
     def dt(self) -> datetime:
         return datetime.fromtimestamp(self.ts, tz=timezone.utc)
+
+
+@dataclass(slots=True)
+class DaySummary:
+    """One trading day of KMI-30, maintained live during the session."""
+
+    day: str  # YYYY-MM-DD, Pakistan time
+    open: float
+    high: float
+    low: float
+    close: float
+    prev_close: float | None
+    readings: int
+    alerts: int
+    first_ts: int
+    last_ts: int
+
+    @property
+    def change(self) -> float | None:
+        return self.close - self.prev_close if self.prev_close else None
+
+    @property
+    def change_pct(self) -> float | None:
+        return (self.close / self.prev_close - 1) * 100 if self.prev_close else None
+
+    def to_dict(self) -> dict:
+        return {
+            "day": self.day, "open": self.open, "high": self.high, "low": self.low, "close": self.close,
+            "prev_close": self.prev_close, "change": self.change, "change_pct": self.change_pct,
+            "readings": self.readings, "alerts": self.alerts, "first_ts": self.first_ts, "last_ts": self.last_ts,
+        }
 
 
 @dataclass(slots=True)
