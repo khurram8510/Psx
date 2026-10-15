@@ -83,7 +83,7 @@ All detectors run on event time, so a live run and a replay of the same data pro
 | `trend` | EMA5/EMA20 regime flip, held 2 bars, confirmed by 10-bar OLS slope | EMA gap ≥ 3σ | Trend reversals |
 | `cusum` | Two-sided CUSUM on standardised 1-min returns, each clipped to ±4 | k = 0.5, h = 5 | Sustained drift that no single bar reveals |
 | `vol_regime` | 15-min realised vol vs same-time-of-day history, or a slow intraday EWMA baseline | 2× warning, 3× critical | Volatility spikes |
-| `feed` | Index value not moving, and poll failures | 3 min unchanged, 5 failed polls, no data 30 min after open | Data-quality problems |
+| `feed` | Index value not moving, and poll failures | 10 min unchanged, 5 failed polls, no data 30 min after open | Data-quality problems |
 
 Noise controls:
 

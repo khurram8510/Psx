@@ -110,8 +110,11 @@ def test_feed_health_lifecycle():
     assert nd and nd[0].key == "feed:no_data"
     last = open_ts + 32 * 60
     assert f.check(last + 60, open_ts, last, 0, 1) == []
-    assert f.check(last + 200, open_ts, last, 0, 1)[0].key == "feed:stale"
-    assert f.check(last + 260, open_ts, last, 0, 1) == []
-    assert f.check(last + 300, open_ts, last + 290, 0, 1)[0].key == "feed:fresh"
-    assert f.check(last + 400, None, last, 5, 1)[0].key == "feed:errors"
-    assert f.check(last + 410, None, last, 0, 1)[0].key == "feed:recovered"
+    assert f.check(last + 3 * 60, open_ts, last, 0, 1) == []  # the old 3-minute threshold no longer fires
+    assert f.check(last + 10 * 60 - 1, open_ts, last, 0, 1) == []
+    stale = f.check(last + 10 * 60, open_ts, last, 0, 1)
+    assert stale[0].key == "feed:stale" and "10.0 minutes" in stale[0].detail
+    assert f.check(last + 15 * 60, open_ts, last, 0, 1) == []  # alerts once per stale episode
+    assert f.check(last + 16 * 60, open_ts, last + 16 * 60 - 5, 0, 1)[0].key == "feed:fresh"
+    assert f.check(last + 17 * 60, None, last, 5, 1)[0].key == "feed:errors"
+    assert f.check(last + 17 * 60 + 10, None, last, 0, 1)[0].key == "feed:recovered"

@@ -152,7 +152,9 @@ async def test_frozen_index_value_raises_stale_then_fresh(settings, calendar):
     clock = FakeClock(pkt(2026, 9, 14, 10, 0))
     store, posts = Store(":memory:"), []
     agent = build(settings, calendar, clock, store, posts, transport=httpx.MockTransport(indices))
-    await run(agent, clock, pkt(2026, 9, 14, 10, 0), pkt(2026, 9, 14, 10, 5), step_s=10)
+    await run(agent, clock, pkt(2026, 9, 14, 10, 0), pkt(2026, 9, 14, 10, 9, 50), step_s=10)
+    assert agent.hub.alerts == []  # unchanged for under 10 minutes: no alert
+    await run(agent, clock, clock.t, pkt(2026, 9, 14, 10, 10, 10), step_s=10)
     assert [a["key"] for a in agent.hub.alerts] == ["feed:stale"]
     page["value"] = 261_050.00
     await run(agent, clock, clock.t, clock.t + timedelta(seconds=20), step_s=10)

@@ -37,7 +37,7 @@ detection:
   cusum:      {enabled: true, k: 0.5, h: 5.0}
   vol_regime: {enabled: true, window_min: 15, lookback_days: 20, min_history_days: 5,
                warning_ratio: 2.0, critical_ratio: 3.0, rearm_ratio: 1.5, baseline_lambda: 0.985}
-  feed:       {enabled: true, stale_min: 3, no_data_after_open_min: 30, failure_streak: 5}
+  feed:       {enabled: true, stale_min: 10, no_data_after_open_min: 30, failure_streak: 5}
 
 slack:
   channel_label: KMI-30 Monitor

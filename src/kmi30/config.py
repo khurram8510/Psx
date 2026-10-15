@@ -93,7 +93,7 @@ class VolRegimeConfig(BaseModel):
 
 class FeedConfig(BaseModel):
     enabled: bool = True
-    stale_min: float = 3.0
+    stale_min: float = Field(10.0, gt=0)  # minutes without a value change before a stale-feed alert
     no_data_after_open_min: float = 30.0
     failure_streak: int = 5
 
